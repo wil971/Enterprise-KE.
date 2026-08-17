@@ -1,0 +1,26 @@
+# Aether Enterprise Knowledge Hub
+
+An enterprise-grade Knowledge Graph and Model Context Protocol (MCP) platform built for secure multi-tenant document ingestion, AI extraction, and context retrieval.
+
+## Architecture Highlights
+- **Tenant Isolation:** Fenced Cypher queries strictly isolate enterprise data down to the graph node level.
+- **AI Extraction Pipeline:** Extracts structured entities (clients, projects, deadlines) using cloud LLMs.
+- **FastMCP Protocol:** Standardized tool interfaces for Claude Desktop, Copilot, and custom AI agents.
+- **Audit Logging:** Every query and document ingestion generates an immutable audit record in Neo4j.
+
+## Project Structure
+- `config.py`: Environment configuration and logger settings.
+- `database.py`: Neo4j async driver connection pool.
+- `security.py`: Rate limiting and tenant validation layers.
+- `refiner.py`: Information extraction and graph transformation.
+- `retrieval.py`: Secure multi-tenant graph search queries.
+- `main.py`: FastMCP entry point and server endpoints.
+
+## Environment Variables Required
+| Variable | Description |
+| :--- | :--- |
+| `NEO4J_URI` | Neo4j AuraDB Connection String |
+| `NEO4J_USER` | Neo4j Database Username |
+| `NEO4J_PASS` | Neo4j Database Password |
+| `GROQ_API_KEY` | Cloud AI API Key for Entity Extraction |
+| `ENVIRONMENT` | Deployment stage (`production`) |
