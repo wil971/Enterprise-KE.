@@ -2,7 +2,7 @@ import json
 import uuid
 import asyncio
 from datetime import datetime, timezone
-from Fastmcp import FastMCP
+from fastmcp import fastMCP
 from config import APP_NAME, ENVIRONMENT, logger
 from database import get_driver, close_driver, init_driver
 from security import validate_tenant_id, rate_limiter, write_audit_log
