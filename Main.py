@@ -75,7 +75,7 @@ if __name__ == "__main__":
     init_driver()
     try:
         if __name__ == "__main__":
-        mcp.run()
+ mcp.run()
 
-    finally:
+finally:
         asyncio.run(close_driver())
