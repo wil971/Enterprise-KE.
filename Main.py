@@ -74,7 +74,6 @@ Security: Every object must belong to a tenant_id.
 if __name__ == "__main__":
     init_driver()
     try:
-        if __name__ == "__main__":
  mcp.run()
 
 finally:
