@@ -74,7 +74,6 @@ Security: Every object must belong to a tenant_id.
 if __name__ == "__main__":
     init_driver()
     try:
- mcp.run()
-
-finally:
+      mcp.run() 
+    finally:
         asyncio.run(close_driver())
