@@ -70,7 +70,34 @@ Nodes: Tenant, Document, Client, Project, Entity, AuditLog
 Relationships: Tenant -[:OWNS]-> Document, Document -[:MENTIONS]-> Client/Project, Client -[:OWNS_PROJECT]-> Project
 Security: Every object must belong to a tenant_id.
 """
+from starlette.requests import Request
+from starlette.responses import HTMLResponse
 
+@mcp.custom_route("/", methods=["GET"])
+async def homepage(request: Request) -> HTMLResponse:
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+        <head>
+            <title>Enterprise GraphRAG API</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background-color: #0f172a; color: #f8fafc; }
+                .card { background: #1e293b; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+                .status { color: #22c55e; font-weight: bold; }
+                code { background: #334155; padding: 4px 8px; border-radius: 4px; color: #38bdf8; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>Enterprise GraphRAG Backend</h1>
+                <p>Status: <span class="status">● Live & Operational</span></p>
+                <p>MCP SSE Transport Endpoint: <code>/sse</code></p>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content, status_code=200)
+    
 if __name__ == "__main__":
     init_driver()
     try:
