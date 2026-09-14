@@ -176,3 +176,4 @@ with tab3:
         {"Source Entity": "FastMCP Server", "Relationship": "TRAVERSES_GRAPH", "Target Entity": "Enterprise-KE-3", "Weight": "0.95"}
     ]
     st.dataframe(pd.DataFrame(relations_data), use_container_width=True)
+    
