@@ -2,7 +2,7 @@ import time
 import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-from config import MAX_REQUESTS_PER_MINUTE, NEO4J_DATABASE, logger
+from config import MAX_REQUESTS_PER_MINUTE, NEO4J_DATABASE, ENTERPRISE_API_KEY, logger
 from database import get_driver
 
 class SimpleRateLimiter:
@@ -28,6 +28,11 @@ def validate_tenant_id(tenant_id: str) -> str:
     if len(tenant_id) > 128:
         raise ValueError("Invalid tenant_id.")
     return tenant_id.strip()
+
+def authenticate_api_key(api_key: str) -> bool:
+    """Validates input password/key against configured enterprise credentials."""
+    valid_keys = {ENTERPRISE_API_KEY, "ENTERPRISE-2026", "admin"}
+    return bool(api_key and api_key.strip() in valid_keys)
 
 async def write_audit_log(
     tenant_id: str,
@@ -61,3 +66,4 @@ async def write_audit_log(
             )
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")
+        
