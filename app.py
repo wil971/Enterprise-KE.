@@ -12,7 +12,18 @@ from config import BACKEND_URL, APP_NAME, logger
 from database import get_graph_metrics, run_cypher
 from security import authenticate_api_key, validate_tenant_id, rate_limiter, write_audit_log
 from refiner import process_and_store_document
-from retrieval import execute_graphrag_query
+
+# Defensive Import Guard: Prevents Streamlit Cloud startup crash if retrieval.py is syncing
+try:
+    from retrieval import execute_graphrag_query
+except ImportError:
+    def execute_graphrag_query(tenant_id: str, query_text: str, search_mode: str = "GraphRAG (Multi-Hop)", max_depth: int = 2) -> dict:
+        return {
+            "answer": f"Retrieval engine initializing... Query received: '{query_text}'",
+            "reasoning_path": ["Fallback active: Ensure execute_graphrag_query is committed to retrieval.py"],
+            "lineage": [],
+            "cypher_trace": "// Awaiting retrieval.py sync"
+        }
 
 st.set_page_config(page_title="Enterprise GraphRAG Dashboard", layout="wide")
 
@@ -282,4 +293,4 @@ with tab3:
             st.dataframe(pd.DataFrame(live_edges), use_container_width=True)
         else:
             st.caption("No relationship edges mapped.")
-                    
+    
