@@ -282,5 +282,4 @@ with tab3:
             st.dataframe(pd.DataFrame(live_edges), use_container_width=True)
         else:
             st.caption("No relationship edges mapped.")
-            
-
+                    
