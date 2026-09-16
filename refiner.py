@@ -1,9 +1,11 @@
 import json
 import requests
+import asyncio
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from config import AI_API_KEY, AI_API_URL, AI_MODEL, NEO4J_DATABASE, logger
 from database import get_driver
+
 
 def extract_business_entities(text: str) -> Dict[str, Any]:
     if not text or not text.strip():
@@ -47,6 +49,7 @@ DOCUMENT:
 
     return extracted
 
+
 def validate_extraction(data: Dict[str, Any]) -> Dict[str, Any]:
     required_fields = ["client", "project", "deadline", "document_type", "important_entities"]
     for field in required_fields:
@@ -55,6 +58,7 @@ def validate_extraction(data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(data["important_entities"], list):
         data["important_entities"] = []
     return data
+
 
 async def store_business_document(
     tenant_id: str,
@@ -90,9 +94,54 @@ async def store_business_document(
             document_id=document_id,
             title=title,
             text=text,
-            client=extracted.get("client", ""),
-            project=extracted.get("project", ""),
-            deadline=extracted.get("deadline", ""),
+            client=extracted.get("client", "Unassigned"),
+            project=extracted.get("project", "General"),
+            deadline=extracted.get("deadline", "N/A"),
             timestamp=timestamp,
         )
         await result.consume()
+
+
+def process_and_store_document(
+    tenant_id: str,
+    document_id: str,
+    title: str,
+    text: str
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """Synchronous pipeline entry point called by app.py UI."""
+    try:
+        raw_extraction = extract_business_entities(text)
+        validated = validate_extraction(raw_extraction)
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+
+        loop.run_until_complete(
+            store_business_document(
+                tenant_id=tenant_id,
+                document_id=document_id,
+                title=title,
+                text=text,
+                extracted=validated
+            )
+        )
+
+        stats = {
+            "client": validated.get("client"),
+            "project": validated.get("project"),
+            "entities_extracted": len(validated.get("important_entities", [])),
+            "status": "Synced 🟢"
+        }
+        return True, f"Successfully processed and stored '{title}'.", stats
+
+    except Exception as e:
+        logger.error(f"Failed to process document {title}: {e}")
+        return False, f"Processing error: {str(e)}", {}
+        
