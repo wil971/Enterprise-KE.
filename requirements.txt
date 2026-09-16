@@ -5,3 +5,7 @@ python-dotenv>=1.0.0
 streamlit
 pandas
 pyvis
+nest_asyncio
+pypdf
+python-docx
+
