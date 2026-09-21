@@ -74,7 +74,7 @@ st.markdown("""
         border-bottom: 2px solid #0284c7 !important;
     }
     </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # SECURITY & AUTHENTICATION GATE
@@ -173,7 +173,7 @@ with col_ws:
             <div style="color:#9ca3af; font-size:0.75rem;">CURRENT WORKSPACE</div>
             <div style="color:#38bdf8; font-weight:600; font-size:0.85rem;">{active_workspace.split(' ')[1]} Domain</div>
         </div>
-    """, unsafe_allowed_html=True)
+    """, unsafe_allow_html=True)
 
 # Live Telemetry Metrics Banner
 m1, m2, m3, m4 = st.columns(4)
@@ -494,5 +494,4 @@ WHERE v.workspace = '{active_workspace}'
 RETURN v.name, c.title, s.penalty_rate
 LIMIT 50;
         """, language="cypher")
-        
     
