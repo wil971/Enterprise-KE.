@@ -248,7 +248,7 @@ with tab2:
     col_up, col_info = st.columns([2, 1])
     
     with col_up:
-        with st.container(border=True):
+        with st.container():  # Fixed: removed border=True causing the AttributeError
             uploaded_files = st.file_uploader(
                 "Upload PDF, DOCX, CSV, or Parquet datasets", 
                 type=["pdf", "docx", "csv", "parquet"], 
@@ -494,4 +494,3 @@ WHERE v.workspace = '{active_workspace}'
 RETURN v.name, c.title, s.penalty_rate
 LIMIT 50;
         """, language="cypher")
-    
