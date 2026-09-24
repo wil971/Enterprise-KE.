@@ -480,7 +480,7 @@ asyncio.run(query_graph())
         """.format(url=BACKEND_URL, workspace=active_workspace, depth=max_depth), language="python")
 
     with sdk_tab2:
-        st.code("""
+        st.code(""")
 import {{ MCPClient }} from "@modelcontextprotocol/sdk";
 
 const client = new MCPClient({{
