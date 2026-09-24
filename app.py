@@ -268,15 +268,17 @@ with tab1:
             ]
             
             for row in lineage_data:
+                node_id_val = row["Node ID"]
+                doc_name = row["Document Name"]
                 cols = st.columns([1.2, 1.5, 2.2, 1.8, 1.3])
-                cols[0].text(row["Node ID"])
+                cols[0].text(node_id_val)
                 cols[1].text(row["Entity Type"])
-                cols[2].text(row["Document Name"])
+                cols[2].text(doc_name)
                 cols[3].progress(row["Match Confidence"] / 100.0, text=f"{row['Match Confidence']}%")
                 cols[4].text(row["Status"])
                 
-                with st.expander(f"📖 Preview Source Text Chunk ({row['Document Name']})"):
-                    st.markdown(f"> *...Extract from {row['Document Name']} corresponding to node {row['NODE ID']}: Governing provisions establish strict adherence to multi-hop compliance thresholds under workspace '{active_workspace}'...*")
+                with st.expander(f"📖 Preview Source Text Chunk ({doc_name})"):
+                    st.markdown(f"> *...Extract from {doc_name} corresponding to node {node_id_val}: Governing provisions establish strict adherence to multi-hop compliance thresholds under workspace '{active_workspace}'...*")
             
             st.markdown("---")
             
@@ -457,4 +459,4 @@ with tab3:
             })
         with col_sel2:
             st.markdown("**Grounded Document Excerpt:**")
-            st.markdown("> *...In the event that uptime falls b
+            
