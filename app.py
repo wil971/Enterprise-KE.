@@ -91,7 +91,7 @@ st.markdown(
 
 # ----------------------------- Session state --------------------------------
 
-DEFAULTS = {
+DEFAULTS = {}
     "authenticated": False,
     "demo_authenticated": False,
     "user": "",
