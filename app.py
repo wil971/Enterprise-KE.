@@ -1,607 +1,569 @@
-import streamlit as st
-import requests
-import pandas as pd
-import time
+import os
 import json
+import time
+from typing import Any
+
+import pandas as pd
+import requests
+import streamlit as st
 import streamlit.components.v1 as components
 
-# ==============================================================================
-# 1. PAGE INITIALIZATION & CONFIGURATION
-# ==============================================================================
+# =============================================================================
+# Enterprise Knowledge Graph & Secure Context Retrieval — Streamlit frontend
+# =============================================================================
+# Configure BACKEND_URL in Streamlit secrets or environment variables.
+# Example:
+# BACKEND_URL = "https://your-api-service.onrender.com"
+#
+# Optional authentication:
+# APP_USERNAME and APP_PASSWORD may be set as environment variables/secrets.
+# If neither is configured, the app uses a local demo gate (not production auth).
+# Never commit real credentials or API keys to source control.
+
 st.set_page_config(
-    page_title="Enterprise GraphRAG Command Center", 
+    page_title="Enterprise Knowledge Workspace",
+    page_icon="🔎",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-BACKEND_URL = "https://onrender.com"
+BACKEND_URL = (
+    st.secrets.get("BACKEND_URL", "")
+    if hasattr(st, "secrets")
+    else ""
+) or os.getenv("BACKEND_URL", "")
+BACKEND_URL = BACKEND_URL.rstrip("/")
 
-# ==============================================================================
-# 2. CUSTOM DARK THEME & CSS MATRIX
-# ==============================================================================
-st.markdown("""
+APP_USERNAME = (
+    st.secrets.get("APP_USERNAME", "")
+    if hasattr(st, "secrets")
+    else ""
+) or os.getenv("APP_USERNAME", "")
+APP_PASSWORD = (
+    st.secrets.get("APP_PASSWORD", "")
+    if hasattr(st, "secrets")
+    else ""
+) or os.getenv("APP_PASSWORD", "")
+
+REQUEST_TIMEOUT = 60
+ALLOWED_EXTENSIONS = ["pdf", "docx", "csv", "parquet", "txt", "md"]
+
+# ------------------------------- Styling ------------------------------------
+st.markdown(
+    """
     <style>
-    /* Global Application Workspace Screen Setup */
-    .stApp {
-        background-color: #060913;
-        color: #f1f5f9;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Global Sidebar Navigation Control Layout */
+    .stApp { background:#060913; color:#f1f5f9; }
+    #MainMenu, footer { visibility:hidden; }
     section[data-testid="stSidebar"] {
-        background-color: #0b1120 !important;
-        border-right: 1px solid #1e293b !important;
+        background:#0b1120; border-right:1px solid #1e293b;
     }
-    
-    /* Interactive Telemetry Containers (Gloss Glassmorphism Card Code) */
-    .telemetry-card {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        transition: transform 0.2s ease, border-color 0.2s ease;
+    .hero {
+        background:linear-gradient(135deg,#0f172a,#1e293b);
+        border:1px solid #334155; border-radius:14px;
+        padding:22px 24px; margin-bottom:16px;
     }
-    .telemetry-card:hover {
-        transform: translateY(-2px);
-        border-color: #38bdf8;
+    .metric {
+        background:linear-gradient(135deg,#0f172a,#1e293b);
+        border:1px solid #334155; border-radius:12px;
+        padding:18px; min-height:112px;
     }
-    
-    /* Dark Drop-down Component Selection Fields */
-    .stTextInput input, .stSelectbox select, .stMultiSelect div {
-        background-color: #0f172a !important;
-        border: 1px solid #334155 !important;
-        color: #f8fafc !important;
-        border-radius: 8px !important;
-        padding: 10px !important;
+    .metric-label { color:#94a3b8; font-size:.78rem; font-weight:700;
+                    text-transform:uppercase; }
+    .metric-value { color:#f8fafc; font-size:1.75rem; font-weight:800;
+                    margin-top:5px; }
+    .muted { color:#94a3b8; }
+    div.stButton > button {
+        background:linear-gradient(90deg,#0284c7,#0369a1);
+        color:white; border:0; border-radius:8px; font-weight:600;
     }
-    .stTextInput input:focus {
-        border-color: #38bdf8 !important;
-        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2) !important;
-    }
-    
-    /* Premium Direct Action Trigger Controls Design Layout */
-    .stButton>button {
-        background: linear-gradient(90deg, #0284c7 0%, #0369a1 100%) !important;
-        color: #ffffff !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 12px 24px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.025em !important;
-        box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3) !important;
-        transition: all 0.2s ease-in-out !important;
-    }
-    .stButton>button:hover {
-        background: linear-gradient(90deg, #0ea5e9 0%, #0284c7 100%) !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 6px 20px rgba(14, 165, 233, 0.4) !important;
-    }
-    
-    /* Custom High-Lustre Module Tabs Navigation Layer Layout */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 12px;
-        border-bottom: 2px solid #1e293b;
-        padding-bottom: 4px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 48px;
-        background-color: #0f172a;
-        color: #94a3b8;
-        font-weight: 600;
-        border: 1px solid #1e293b;
-        border-radius: 8px 8px 0 0;
-        padding: 0 24px;
-        transition: all 0.2s ease;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #1e293b !important;
-        color: #38bdf8 !important;
-        border: 1px solid #334155 !important;
-        border-bottom: 3px solid #38bdf8 !important;
-    }
+    div.stButton > button:hover { background:#0ea5e9; color:white; }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-# ==============================================================================
-# 3. SESSION STATE & AUTHENTICATION GATE
-# ==============================================================================
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-if "auth_processing" not in st.session_state:
-    st.session_state["auth_processing"] = False
+# ----------------------------- Session state --------------------------------
+defaults = {
+    "authenticated": False,
+    "demo_authenticated": False,
+    "search_history": [],
+    "upload_results": [],
+    "last_query_result": None,
+}
+for key, value in defaults.items():
+    st.session_state.setdefault(key, value)
 
-def run_secure_login_gate():
-    components.html("""
-    <div style="width:100%; text-align:center; margin-bottom:10px;">
-        <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="50" cy="50" r="40" stroke="#1e293b" stroke-width="4"/>
-            <circle cx="50" cy="50" r="40" stroke="#38bdf8" stroke-width="4" stroke-dasharray="80 200">
-                <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="2.5s" repeatCount="indefinite"/>
-            </circle>
-            <path d="M35 50L45 60L65 40" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-    </div>
-    """, height=90)
-    
-    st.markdown("<h1 style='text-align: center; color: #ffffff; font-weight: 800; letter-spacing: -0.025em;'>ENTERPRISE SECURE RETRIEVAL GATEWAY</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #64748b; font-size: 1.1rem; margin-bottom: 40px;'>Cryptographically Audited Context Retrieval Infrastructure Node</p>", unsafe_allow_html=True)
-    
-    col_center, _ = st.columns([1, 0.001])
-    with col_center:
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border: 1px solid #334155; border-radius: 16px; padding: 40px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
-            <h3 style="margin-top:0; color:#f8fafc; font-size:1.3rem; margin-bottom:20px;">Identity Provider Authorization</h3>
-        """, unsafe_allow_html=True)
-        
-        user_input = st.text_input("Corporate Identifier / IAM User")
-        pass_input = st.text_input("Cryptographic Access Key / Token", type="password")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        trigger_auth = st.button("INITIALIZE SECURE AUTHENTICATION HANDSHAKE FLOW", use_container_width=True)
-        
-        if trigger_auth:
-            if pass_input in ["ENTERPRISE-2026", "admin"]:
-                st.session_state["auth_processing"] = True
-                auth_ticker = st.progress(0)
-                status_block = st.empty()
-                
-                for step in range(1, 101, 20):
-                    status_block.markdown(f"<p style='color:#38bdf8; font-weight:500; text-align:center;'>🔒 Executing Zero-Knowledge Token Proof Challenge... {step}%</p>", unsafe_allow_html=True)
-                    auth_ticker.progress(step)
-                    time.sleep(0.12)
-                
-                st.session_state["authenticated"] = True
-                st.session_state["user"] = user_input if user_input else "Principal Executor"
+
+def backend_request(method: str, path: str, *, token: str = "", **kwargs):
+    """Call the configured API and return (response, error_message)."""
+    if not BACKEND_URL:
+        return None, (
+            "Backend URL is not configured. Set BACKEND_URL in Streamlit "
+            "secrets or environment variables."
+        )
+    headers = kwargs.pop("headers", {})
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        response = requests.request(
+            method,
+            f"{BACKEND_URL}{path}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+            **kwargs,
+        )
+        return response, None
+    except requests.RequestException as exc:
+        return None, f"Could not reach the backend: {exc}"
+
+
+def show_api_error(response, error):
+    if error:
+        st.error(error)
+        return
+    try:
+        detail = response.json()
+    except ValueError:
+        detail = response.text[:1500]
+    st.error(f"API returned HTTP {response.status_code}: {detail}")
+
+
+def extract_payload(response):
+    try:
+        return response.json()
+    except ValueError:
+        return {"text": response.text}
+
+
+def render_answer(payload: Any):
+    """Render common answer formats without assuming a specific backend schema."""
+    if isinstance(payload, dict):
+        answer = (
+            payload.get("answer")
+            or payload.get("response")
+            or payload.get("result")
+            or payload.get("message")
+        )
+        if answer:
+            st.markdown("### Answer")
+            st.write(answer)
+
+        sources = (
+            payload.get("sources")
+            or payload.get("citations")
+            or payload.get("documents")
+            or []
+        )
+        if sources:
+            st.markdown("### Sources and evidence")
+            if isinstance(sources, list):
+                for index, source in enumerate(sources, start=1):
+                    with st.expander(f"Source {index}", expanded=index == 1):
+                        if isinstance(source, dict):
+                            st.json(source)
+                        else:
+                            st.write(source)
+            else:
+                st.write(sources)
+
+        if not answer and not sources:
+            st.json(payload)
+    else:
+        st.write(payload)
+
+
+# ----------------------------- Authentication -------------------------------
+def login_gate():
+    st.markdown(
+        """
+        <div class="hero" style="text-align:center">
+          <h1>ENTERPRISE KNOWLEDGE WORKSPACE</h1>
+          <p class="muted">Secure search, document intelligence, and graph exploration</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    left, center, right = st.columns([1, 1.2, 1])
+    with center:
+        with st.form("login_form"):
+            st.subheader("Sign in")
+            username = st.text_input("Username / corporate identifier")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Continue", use_container_width=True)
+
+        if submitted:
+            # This gate is only an optional frontend convenience. Production
+            # authentication and authorization must be enforced by the backend.
+            if APP_USERNAME and APP_PASSWORD:
+                if username == APP_USERNAME and password == APP_PASSWORD:
+                    st.session_state.authenticated = True
+                    st.session_state.user = username
+                    st.rerun()
+                st.error("Incorrect username or password.")
+            elif username.strip() and password.strip():
+                st.session_state.authenticated = True
+                st.session_state.demo_authenticated = True
+                st.session_state.user = username.strip()
+                st.warning(
+                    "Demo gate only: configure APP_USERNAME/APP_PASSWORD and "
+                    "real backend authentication before production use."
+                )
                 st.rerun()
             else:
-                st.error("Access Allocation Rejected: Cryptographic signature mismatch or token expiry flag.")
-        
-        st.markdown("""
-            <hr style="border-color:#334155; margin:30px 0;">
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; color:#94a3b8; font-size:0.85rem;">
-                <div>--- ENCRYPTED SSL FAST_MCP</div>
-                <div>--- HARDENED NODE PROTECTION</div>
-                <div>--- ACTIVE RECONCILIATION AUDIT</div>
-                <div>--- ISOLATED WORKSPACE FRAME</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+                st.warning("Enter a username and password to continue.")
 
-if not st.session_state["authenticated"]:
-    run_secure_login_gate()
+
+if not st.session_state.authenticated:
+    login_gate()
     st.stop()
 
-# ==============================================================================
-# 4. SIDEBAR NAVIGATION & TELEMETRY CONTROL
-# ==============================================================================
-st.sidebar.markdown(f"""
-    <div style="background-color:#1e293b; padding:15px; border-radius:10px; border:1px solid #334155; text-align:center; margin-bottom:15px;">
-        <div style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform: uppercase;">AUTHENTICATED PRINCIPAL</div>
-        <div style="color:#38bdf8; font-size:1.1rem; font-weight:700;">{st.session_state.get('user', 'Global Admin')}</div>
-    </div>
-""", unsafe_allow_html=True)
+# -------------------------------- Sidebar ------------------------------------
+st.sidebar.markdown("## Workspace")
+st.sidebar.caption(f"Signed in as: {st.session_state.get('user', 'User')}")
+if st.session_state.demo_authenticated:
+    st.sidebar.warning("Frontend demo session — not production authentication.")
 
-if st.sidebar.button("🚪 Terminate Secure Session Context", use_container_width=True):
-    st.session_state["authenticated"] = False
-    st.rerun()
-
-st.sidebar.markdown("<hr style='border-color:#1e293b;'>", unsafe_allow_html=True)
-
-st.sidebar.markdown("<h4 style='color:#94a3b8; font-size:0.85rem; font-weight:700;'>DATA PRIVACY ISOLATION SPACES</h4>", unsafe_allow_html=True)
-active_workspace = st.sidebar.selectbox(
-    "Select Tenant Authorization Plane",
+workspace = st.sidebar.selectbox(
+    "Workspace",
     [
-        "🏢 Global Enterprise Knowledge Graph",
-        "⚖️ Legal & Contractual Risk Engine",
-        "💸 Supply Chain & Vendor Audit",
-        "🛡️ FinTech Compliance Workspace"
+        "Global Enterprise",
+        "Legal & Contracts",
+        "Supply Chain & Vendors",
+        "FinTech Compliance",
     ],
-    label_visibility="collapsed"
 )
-
-st.sidebar.markdown("<hr style='border-color:#1e293b;'>", unsafe_allow_html=True)
-
-st.sidebar.markdown("<h4 style='color:#94a3b8; font-size:0.85rem; font-weight:700;'>SERVER STREAM DISPATCH HEALTH</h4>", unsafe_allow_html=True)
-st.sidebar.markdown("""
-<div style="background-color:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:12px; margin-bottom:15px;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <span style="font-size:0.8rem; color:#94a3b8;">FastMCP Core Router</span>
-        <span style="color:#10b981; font-weight:700; font-size:0.8rem;">ONLINE ●</span>
-    </div>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <span style="font-size:0.8rem; color:#94a3b8;">SSE Transport Socket</span>
-        <span style="color:#10b981; font-weight:700; font-size:0.8rem;">SECURED SSL</span>
-    </div>
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-size:0.8rem; color:#94a3b8;">Graph Database Pool</span>
-        <span style="color:#10b981; font-weight:700; font-size:0.8rem;">CONNECTED</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-st.sidebar.markdown("<h4 style='color:#94a3b8; font-size:0.85rem; font-weight:700;'>GRAPH RESOLUTION MATRIX</h4>", unsafe_allow_html=True)
 search_mode = st.sidebar.selectbox(
-    "Query Router Execution Mode",
-    ["GraphRAG (Multi-Hop Engine)", "Hybrid (Semantic Proximity Vector + Graph)", "Deterministic Cypher Path Traversal"],
-    label_visibility="collapsed"
+    "Retrieval mode",
+    [
+        "Hybrid search",
+        "Graph multi-hop",
+        "Semantic search",
+        "Keyword search",
+    ],
 )
-
-max_depth = st.sidebar.slider("Recursive Relationship Traversal Hop Boundary", min_value=1, max_value=4, value=2)
-
-st.sidebar.markdown("<h4 style='color:#94a3b8; font-size:0.85rem; font-weight:700;'>TARGET ONTOLOGY LABELS</h4>", unsafe_allow_html=True)
+max_depth = st.sidebar.slider("Graph traversal depth", 1, 5, 2)
 target_labels = st.sidebar.multiselect(
-    "Enforce Structural Label Constraints",
+    "Entity filters",
     ["Vendors", "Contracts", "SLA Clauses", "Risks", "Liabilities", "Payment Terms"],
     default=["Vendors", "Contracts", "SLA Clauses", "Risks"],
-    label_visibility="collapsed"
 )
-# ==============================================================================
-# 5. HEADER & TOP METRICS CARDS
-# ==============================================================================
-col_main_title, col_tenant_seal = st.columns([3, 1])
-with col_main_title:
-    st.markdown("<h2 style='color:#ffffff; margin:0; font-weight:800;'>ENTERPRISE KNOWLEDGE GRAPH CONTEXT ENGINE</h2>", unsafe_allow_html=True)
-    st.markdown(f"<p style='color:#38bdf8; font-size:0.9rem; margin-top:2px;'>Asynchronous FastMCP Processing Instance Gateway: <code>{active_workspace}</code></p>", unsafe_allow_html=True)
-with col_tenant_seal:
-    st.markdown(f"""
-    <div style="background-color:#0f172a; border:1px solid #38bdf8; border-radius:8px; padding:10px; text-align:center;">
-        <span style="color:#38bdf8; font-size:0.75rem; font-weight:700; display:block;">ACTIVE SECURITY BOUNDARY</span>
-        <span style="color:#ffffff; font-size:0.85rem; font-weight:600;">{active_workspace.split(' ')[1] if ' ' in active_workspace else active_workspace}</span>
-    </div>
-    """, unsafe_allow_html=True)
+api_token = st.sidebar.text_input(
+    "Backend API token (optional)", type="password",
+    help="Use a short-lived token. Do not paste a password or secret into a shared device.",
+)
+if st.sidebar.button("Sign out", use_container_width=True):
+    for key in ("authenticated", "demo_authenticated", "user"):
+        st.session_state.pop(key, None)
+    st.rerun()
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-m1, m2, m3, m4 = st.columns(4)
-with m1:
-    st.markdown("""
-    <div class="telemetry-card">
-        <div style="color:#94a3b8; font-size:0.75rem; font-weight:700; text-transform:uppercase;">Indexed Metadata Nodes</div>
-        <div style="color:#ffffff; font-size:1.8rem; font-weight:800; margin:5px 0;">1,420</div>
-        <div style="color:#10b981; font-size:0.75rem;">↑ 28 linked today</div>
+# --------------------------------- Header ------------------------------------
+st.markdown(
+    f"""
+    <div class="hero">
+      <h2 style="margin:0">Enterprise Knowledge Graph</h2>
+      <p style="color:#38bdf8;margin:.4rem 0 0">
+        Workspace: {workspace} · Evidence-backed context retrieval
+      </p>
     </div>
-    """, unsafe_allow_html=True)
-with m2:
-    st.markdown("""
-    <div class="telemetry-card">
-        <div style="color:#94a3b8; font-size:0.75rem; font-weight:700; text-transform:uppercase;">Active Structural Edges</div>
-        <div style="color:#ffffff; font-size:1.8rem; font-weight:800; margin:5px 0;">3,890</div>
-        <div style="color:#38bdf8; font-size:0.75rem;">↑ 84 links syncing</div>
-    </div>
-    """, unsafe_allow_html=True)
-with m3:
-    st.markdown("""
-    <div class="telemetry-card">
-        <div style="color:#94a3b8; font-size:0.75rem; font-weight:700; text-transform:uppercase;">FastMCP Router Latency</div>
-        <div style="color:#ffffff; font-size:1.8rem; font-weight:800; margin:5px 0;">110 ms</div>
-        <div style="color:#10b981; font-size:0.75rem;">↓ 12ms optimized</div>
-    </div>
-    """, unsafe_allow_html=True)
-with m4:
-    st.markdown("""
-    <div class="telemetry-card">
-        <div style="color:#94a3b8; font-size:0.75rem; font-weight:700; text-transform:uppercase;">Sync Compliance</div>
-        <div style="color:#ffffff; font-size:1.8rem; font-weight:800; margin:5px 0;">100%</div>
-        <div style="color:#10b981; font-size:0.75rem;">SECURE 🟢 Real-time</div>
-    </div>
-    """, unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ==============================================================================
-# 6. APPLICATION NAVIGATION MODULE TABS
-# ==============================================================================
-tab_query, tab_ingest, tab_visualizer, tab_api_control = st.tabs([
-    "🔍 CONTEXT RETRIEVAL INTERFACE",
-    "📥 AUDITED FILE EXTRACTION PIPELINE",
-    "🕸️ INTERACTIVE WEBGL KNOWLEDGE CANVAS",
-    "⚙️ API CONTROL ROOM"
-])
-
-# ------------------------------------------------------------------------------
-# TAB 1: CONTEXT RETRIEVAL INTERFACE
-# ------------------------------------------------------------------------------
-with tab_query:
-    st.markdown("<h3 style='color:#ffffff;'>Federated Subgraph Traversal Query</h3>", unsafe_allow_html=True)
-    user_query = st.text_input(
-        "Enter Enterprise Subgraph Query Target", 
-        value="What are the contractual liability thresholds and uptime SLA penalties for core vendor software agreements?",
-        key="query_input"
+# Live health check; never display invented metrics as real telemetry.
+health_response, health_error = backend_request("GET", "/health", token=api_token)
+if health_response is not None and health_response.ok:
+    health_payload = extract_payload(health_response)
+    service_status = "Online"
+    service_detail = health_payload
+else:
+    service_status = "Not verified"
+    service_detail = health_error or (
+        f"Health endpoint returned HTTP {health_response.status_code}"
+        if health_response is not None else "Backend not configured"
     )
-    
-    col_act, _ = st.columns([1, 2])
-    with col_act:
-        run_query = st.button("EXECUTE FAST_MCP MULTI-HOP GRAPH RETRIEVAL", use_container_width=True)
-    
-    if run_query or user_query:
-        st.markdown("<hr style='border-color:#1e293b;'>", unsafe_allow_html=True)
-        st.markdown("<h4 style='color:#38bdf8;'>Trace Lineage & Audit Trail</h4>", unsafe_allow_html=True)
-        
-        with st.status("Tracing Subgraph Dependencies across FastMCP Router...", expanded=True) as status:
-            st.write("🔹 Form Ingestion -> Serializing Search Request Vector...")
-            time.sleep(0.1)
-            st.write(f"🔹 Traversing Neo4j Graph Index with Hop Limit = {max_depth}...")
-            time.sleep(0.15)
-            st.write(f"🔹 Filtering Ontology Labels: {', '.join(target_labels)}...")
-            time.sleep(0.1)
-            status.update(label="Subgraph Traversal Resolved Successfully!", state="complete", expanded=False)
-        
-        lineage_data = [
-            {"Node ID": "NODE-8821", "Entity Type": "SLA Clause", "Source Target": "Vendor_Agreement_2026.pdf", "Vector Proximity": 0.984, "Tenant Seal": "VALIDATED"},
-            {"Node ID": "NODE-4019", "Entity Type": "Liability Rule", "Source Target": "Client_Roster_Q3.csv", "Vector Proximity": 0.961, "Tenant Seal": "VALIDATED"},
-            {"Node ID": "NODE-1102", "Entity Type": "Vendor Org", "Source Target": "Enterprise_SLA_Master.pdf", "Vector Proximity": 0.923, "Tenant Seal": "VALIDATED"},
-            {"Node ID": "NODE-7734", "Entity Type": "Risk Contract", "Source Target": "FinTech_Compliance_V2.docx", "Vector Proximity": 0.895, "Tenant Seal": "VALIDATED"}
-        ]
-        
-        st.dataframe(pd.DataFrame(lineage_data), use_container_width=True)
-        
-        st.markdown("<h4 style='color:#38bdf8; margin-top:20px;'>Parameterized Cypher Query Compilation</h4>", unsafe_allow_html=True)
-        cypher_code = f"""// Parameterized Cypher Compilation Vector - Access Token Guard Active
-MATCH entity_path = (entity_node:Entity)-[*1..{max_depth}]-(connected_nodes)
-WHERE entity_node.tenant_id = '{active_workspace}'
-  AND ANY(label_item IN labels(entity_node) WHERE label_item IN {target_labels})
-  AND (entity_node.normalized_name CONTAINS '{user_query}' OR connected_nodes.summary_text CONTAINS '{user_query}')
-RETURN entity_path, entity_node.contextual_weight 
-ORDER BY entity_node.contextual_weight DESC LIMIT 30;"""
-        st.code(cypher_code, language="cypher")
-        # ------------------------------------------------------------------------------
-# TAB 2: AUDITED FILE EXTRACTION PIPELINE (FIXED REAL FILE DISPATCH ENGINE)
-# ------------------------------------------------------------------------------
-with tab_ingest:
-    st.markdown("<h3 style='color:#ffffff;'>Multi-Format Ingestion & Graph Indexing Pipeline</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#94a3b8;'>Securely ingest unstructured files (PDF, DOCX, CSV, Parquet) directly into the knowledge graph structure.</p>", unsafe_allow_html=True)
-    
-    uploaded_files = st.file_uploader(
-        "Drop target documents for automatic entity extraction",
-        type=["pdf", "docx", "csv", "parquet"],
-        accept_multiple_files=True,
-        key="ingest_file_uploader"
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.markdown(
+        f'<div class="metric"><div class="metric-label">Backend status</div>'
+        f'<div class="metric-value">{service_status}</div></div>',
+        unsafe_allow_html=True,
     )
-    
-    # Store files in session memory so they don't get cleared on button click
-    if uploaded_files:
-        st.session_state["cached_files"] = uploaded_files
-        
-    active_files = st.session_state.get("cached_files", [])
+with c2:
+    st.markdown(
+        f'<div class="metric"><div class="metric-label">Workspace</div>'
+        f'<div class="metric-value" style="font-size:1.2rem">{workspace}</div></div>',
+        unsafe_allow_html=True,
+    )
+with c3:
+    st.markdown(
+        f'<div class="metric"><div class="metric-label">Retrieval mode</div>'
+        f'<div class="metric-value" style="font-size:1.2rem">{search_mode}</div></div>',
+        unsafe_allow_html=True,
+    )
+with c4:
+    st.markdown(
+        f'<div class="metric"><div class="metric-label">Selected entity filters</div>'
+        f'<div class="metric-value">{len(target_labels)}</div></div>',
+        unsafe_allow_html=True,
+    )
+with st.expander("Backend health details"):
+    st.write(service_detail)
 
-    if st.button("INITIALIZE BATCH INGESTION PIPELINE", use_container_width=True):
-        if active_files:
-            pipeline_progress = st.progress(0)
-            status_text = st.empty()
-            
-            total_files = len(active_files)
-            results = []
-            
-            for idx, file in enumerate(active_files):
-                status_text.markdown(f"<p style='color:#38bdf8; font-weight:600;'>[FILE {idx+1}/{total_files}] Processing & Transmitting raw payload: {file.name} ({file.size} bytes)...</p>", unsafe_allow_html=True)
-                
-                # Check for empty file
-                if file.size == 0:
-                    results.append({
-                        "Document Title": file.name,
-                        "Format": file.name.split('.')[-1].upper(),
-                        "Payload Size": "0 Bytes",
-                        "Status": "FAILED: EMPTY FILE 🔴"
-                    })
-                    continue
+tab_search, tab_upload, tab_graph, tab_activity, tab_api = st.tabs(
+    [
+        "🔎 Enterprise Search",
+        "📤 Document Ingestion",
+        "🕸️ Knowledge Graph",
+        "🕘 Search & Upload History",
+        "⚙️ API Diagnostics",
+    ]
+)
 
-                try:
-                    # Reset byte cursor to 0 before reading raw bytes
-                    file.seek(0)
-                    file_bytes = file.read()
-                    
-                    # Determine MIME type fallback for documents
-                    file_ext = file.name.split('.')[-1].lower()
-                    mime_types = {
-                        "pdf": "application/pdf",
-                        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        "csv": "text/csv",
-                        "parquet": "application/octet-stream"
-                    }
-                    content_type = file.type if file.type else mime_types.get(file_ext, "application/octet-stream")
-                    
-                    payload_files = {
-                        "file": (file.name, file_bytes, content_type)
-                    }
-                    payload_data = {
-                        "tenant_id": active_workspace,
-                        "filename": file.name
-                    }
-                    headers = {
-                        "Authorization": "Bearer ENTERPRISE-2026"
-                    }
-                    
-                    # HTTP POST request to FastMCP Server
-                    response = requests.post(
-                        f"{BACKEND_URL}/v1/graph/ingest", 
-                        files=payload_files, 
-                        data=payload_data,
-                        headers=headers,
-                        timeout=15
-                    )
-                    
-                    if response.status_code in [200, 201]:
-                        results.append({
-                            "Document Title": file.name, 
-                            "Format": file.name.split('.')[-1].upper(), 
-                            "Payload Size": f"{file.size} Bytes", 
-                            "Status": "INDEXED & DISPATCHED 🟢"
-                        })
-                    else:
-                        results.append({
-                            "Document Title": file.name, 
-                            "Format": file.name.split('.')[-1].upper(), 
-                            "Payload Size": f"{file.size} Bytes", 
-                            "Status": f"SERVER RESPONDED ({response.status_code}) 🟡"
-                        })
-                
-                except Exception as err:
-                    # Pure error catch without artificial UI delay
-                    results.append({
-                        "Document Title": file.name, 
-                        "Format": file.name.split('.')[-1].upper(), 
-                        "Payload Size": f"{file.size} Bytes", 
-                        "Status": f"FILE ERROR: {str(err)[:30]} 🔴"
-                    })
-                
-                pipeline_progress.progress(int((idx + 1) / total_files * 100))
-            
-            st.success(f"Successfully processed {total_files} document(s) for workspace: {active_workspace}.")
-            st.markdown("<h4 style='color:#38bdf8; margin-top:20px;'>Live Batch Processing Audit Trail</h4>", unsafe_allow_html=True)
-            st.dataframe(pd.DataFrame(results), use_container_width=True)
+# ------------------------------ Enterprise search ---------------------------
+with tab_search:
+    st.subheader("Ask your organization's knowledge")
+    st.caption(
+        "Search internal material and inspect the evidence returned by your backend."
+    )
+    with st.form("enterprise_search_form"):
+        query = st.text_area(
+            "Question",
+            placeholder="e.g. What are the renewal terms and liability limits in the vendor agreements?",
+            height=110,
+        )
+        submitted = st.form_submit_button(
+            "Search enterprise knowledge", use_container_width=True
+        )
+
+    if submitted:
+        if not query.strip():
+            st.warning("Enter a question first.")
         else:
-            st.warning("Please drag & drop at least one document target before triggering the pipeline execution.")
-            
-    st.markdown("<h4 style='color:#38bdf8; margin-top:30px;'>Ingested Documents Audit Registry</h4>", unsafe_allow_html=True)
-    ingested_df = pd.DataFrame([
-        {"Document Title": "Vendor_Agreement_2026.pdf", "Format": "PDF", "Entities Extracted": 142, "Relationships Linked": 380, "Status": "INDEXED 🟢"},
-        {"Document Title": "Client_Roster_Q3.csv", "Format": "CSV", "Entities Extracted": 89, "Relationships Linked": 210, "Status": "INDEXED 🟢"},
-        {"Document Title": "FinTech_Compliance_V2.docx", "Format": "DOCX", "Entities Extracted": 215, "Relationships Linked": 540, "Status": "INDEXED 🟢"}
-    ])
-    st.dataframe(ingested_df, use_container_width=True)
-
-# ------------------------------------------------------------------------------
-# TAB 3: INTERACTIVE WEBGL KNOWLEDGE CANVAS
-# ------------------------------------------------------------------------------
-with tab_visualizer:
-    st.markdown("<h3 style='color:#ffffff;'>Interactive Subgraph Explorer Canvas</h3>", unsafe_allow_html=True)
-    
-    c_vis1, c_vis2, c_vis3 = st.columns(3)
-    with c_vis1:
-        st.selectbox("Node Layout Algorithm", ["Force Atlas 2", "Hierarchical Tree", "Barnes Hut Physics"])
-    with c_vis2:
-        st.slider("Edge Weight Similarity Threshold", 0.0, 1.0, 0.75)
-    with c_vis3:
-        st.selectbox("Coloring Theme", ["Tenant Partition Scheme", "Entity Type Classification", "Risk Heatmap Cluster"])
-
-    html_graph_code = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-      <style type="text/css">
-        #network-canvas {
-          width: 100%;
-          height: 500px;
-          background-color: #0b1120;
-          border: 1px solid #1e293b;
-          border-radius: 12px;
-        }
-      </style>
-    </head>
-    <body>
-    <div id="network-canvas"></div>
-    <script type="text/javascript">
-      var nodes = new vis.DataSet([
-        {id: 1, label: 'Vendor: AcroCorp', group: 'Vendors', color: '#38bdf8', shape: 'dot', size: 25},
-        {id: 2, label: 'Contract: Master SLA', group: 'Contracts', color: '#10b981', shape: 'dot', size: 20},
-        {id: 3, label: 'SLA: 99.9% Uptime', group: 'SLA Clauses', color: '#f59e0b', shape: 'dot', size: 15},
-        {id: 4, label: 'Risk: $50k Penalty', group: 'Risks', color: '#ef4444', shape: 'dot', size: 18},
-        {id: 5, label: 'Liability Limitation', group: 'Liabilities', color: '#a855f7', shape: 'dot', size: 16}
-      ]);
-
-      var edges = new vis.DataSet([
-        {from: 1, to: 2, label: 'BOUND_BY', color: {color: '#334155'}},
-        {from: 2, to: 3, label: 'CONTAINS_CLAUSE', color: {color: '#334155'}},
-        {from: 3, to: 4, label: 'TRIGGERS_PENALTY', color: {color: '#334155'}},
-        {from: 2, to: 5, label: 'GOVERNED_BY', color: {color: '#334155'}}
-      ]);
-
-      var container = document.getElementById('network-canvas');
-      var data = { nodes: nodes, edges: edges };
-      var options = {
-        nodes: { font: { color: '#ffffff', face: 'system-ui' } },
-        edges: { font: { color: '#94a3b8', size: 10, align: 'middle' } },
-        physics: { enabled: true, barnesHut: { gravitationalConstant: -3000 } }
-      };
-      var network = new vis.Network(container, data, options);
-    </script>
-    </body>
-    </html>
-    """
-    components.html(html_graph_code, height=520)
-
-# ------------------------------------------------------------------------------
-# TAB 4: FAST_MCP API CONTROL ROOM
-# ------------------------------------------------------------------------------
-with tab_api_control:
-    st.markdown("<h3 style='color:#ffffff;'>FastMCP Endpoint Dispatch Control Room</h3>", unsafe_allow_html=True)
-    
-    st.markdown("<h4 style='color:#38bdf8;'>Exposed Microservice Routes</h4>", unsafe_allow_html=True)
-    routes_df = pd.DataFrame([
-        {"Endpoint Route": "/v1/graph/query", "Method": "POST", "Rate Limit": "1000 req/min", "Authentication": "Bearer IAM Token"},
-        {"Endpoint Route": "/v1/graph/ingest", "Method": "POST", "Rate Limit": "200 req/min", "Authentication": "Bearer IAM Token"},
-        {"Endpoint Route": "/v1/graph/traverse", "Method": "GET", "Rate Limit": "500 req/min", "Authentication": "Bearer IAM Token"},
-        {"Endpoint Route": "/v1/schema/ontology", "Method": "GET", "Rate Limit": "2000 req/min", "Authentication": "Public / Open"}
-    ])
-    st.dataframe(routes_df, use_container_width=True)
-    
-    st.markdown("<h4 style='color:#38bdf8; margin-top:20px;'>Live Interactive Request Tester</h4>", unsafe_allow_html=True)
-    col_req, col_res = st.columns(2)
-    
-    default_payload = json.dumps({
-        "tenant_id": active_workspace,
-        "query": "Find high liability contracts",
-        "hop_depth": max_depth,
-        "target_labels": target_labels
-    }, indent=2)
-
-    with col_req:
-        st.markdown("**Request Payload (JSON)**")
-        request_body = st.text_area("JSON Body", value=default_payload, height=200)
-        send_req = st.button("SEND TEST DISPATCH CALL")
-        
-    with col_res:
-        st.markdown("**Server Response Stream**")
-        if send_req:
-            mock_response = {
-                "status": 200,
-                "dispatch_id": "DSP-998231-X",
-                "execution_time_ms": 112,
-                "nodes_evaluated": 42,
-                "tenant_guard": "PASS"
+            body = {
+                "tenant_id": workspace,
+                "query": query.strip(),
+                "hop_depth": max_depth,
+                "target_labels": target_labels,
+                "mode": search_mode,
             }
-            st.json(mock_response)
+            with st.spinner("Retrieving relevant context…"):
+                response, error = backend_request(
+                    "POST",
+                    "/v1/graph/query",
+                    token=api_token,
+                    json=body,
+                )
+            if error or response is None or not response.ok:
+                show_api_error(response, error)
+            else:
+                payload = extract_payload(response)
+                st.session_state.last_query_result = payload
+                st.session_state.search_history.insert(
+                    0,
+                    {
+                        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "query": query.strip(),
+                        "workspace": workspace,
+                        "status": response.status_code,
+                    },
+                )
+                st.success("Search completed.")
+                render_answer(payload)
+
+    if st.session_state.last_query_result is not None:
+        with st.expander("View raw response JSON"):
+            st.json(st.session_state.last_query_result)
+
+# ------------------------------ Document ingestion --------------------------
+with tab_upload:
+    st.subheader("Upload and index documents")
+    st.write(
+        "Choose files, review the queue, then send them to the configured ingestion API."
+    )
+    files = st.file_uploader(
+        "Select documents",
+        type=ALLOWED_EXTENSIONS,
+        accept_multiple_files=True,
+        help="Supported: PDF, DOCX, CSV, Parquet, TXT, and Markdown.",
+        key="document_uploader",
+    )
+
+    if files:
+        upload_table = pd.DataFrame(
+            [
+                {
+                    "File": f.name,
+                    "Type": f.name.rsplit(".", 1)[-1].upper(),
+                    "Size (KB)": round(f.size / 1024, 1),
+                }
+                for f in files
+            ]
+        )
+        st.dataframe(upload_table, use_container_width=True, hide_index=True)
+
+    if st.button("Upload and process selected files", use_container_width=True):
+        if not files:
+            st.warning("Select at least one file.")
+        elif not BACKEND_URL:
+            st.error("Set BACKEND_URL before attempting uploads.")
         else:
-            st.info("Trigger 'SEND TEST DISPATCH CALL' to evaluate API endpoint performance.")
+            progress = st.progress(0)
+            status_area = st.empty()
+            results = []
+            for index, file in enumerate(files):
+                status_area.info(f"Uploading {file.name} ({index + 1}/{len(files)})…")
+                try:
+                    file.seek(0)
+                    multipart = {
+                        "file": (
+                            file.name,
+                            file.getvalue(),
+                            file.type or "application/octet-stream",
+                        )
+                    }
+                    form_data = {
+                        "tenant_id": workspace,
+                        "filename": file.name,
+                    }
+                    response, error = backend_request(
+                        "POST",
+                        "/v1/graph/ingest",
+                        token=api_token,
+                        files=multipart,
+                        data=form_data,
+                    )
+                    if error:
+                        results.append(
+                            {"File": file.name, "Status": "Connection error", "Details": error}
+                        )
+                    elif response.ok:
+                        results.append(
+                            {
+                                "File": file.name,
+                                "Status": "Accepted by API",
+                                "Details": extract_payload(response),
+                            }
+                        )
+                    else:
+                        results.append(
+                            {
+                                "File": file.name,
+                                "Status": f"HTTP {response.status_code}",
+                                "Details": extract_payload(response),
+                            }
+                        )
+                except Exception as exc:
+                    results.append(
+                        {"File": file.name, "Status": "Upload error", "Details": str(exc)}
+                    )
+                progress.progress((index + 1) / len(files))
+            st.session_state.upload_results = results
+            status_area.success("Upload batch finished. Review each API result below.")
 
-    st.markdown("<h4 style='color:#38bdf8; margin-top:20px;'>SDK & Developer Integration Snippets</h4>", unsafe_allow_html=True)
-    
-    sdk_tab_python, sdk_tab_bash, sdk_tab_cypher = st.tabs([
-        "🐍 Python SDK", 
-        "💻 cURL / Bash", 
-        "⚡ Cypher Subgraph Query"
-    ])
+    if st.session_state.upload_results:
+        st.subheader("Batch upload results")
+        st.dataframe(
+            pd.DataFrame(st.session_state.upload_results),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-    with sdk_tab_python:
-        st.code(f"""import requests
+# ------------------------------- Graph explorer -----------------------------
+with tab_graph:
+    st.subheader("Explore graph relationships")
+    st.caption(
+        "This view requests graph data from the backend. The endpoint response "
+        "must provide nodes and edges for visualization."
+    )
+    graph_depth = st.slider(
+        "Explorer depth", 1, 5, max_depth, key="graph_depth"
+    )
+    if st.button("Load graph data", use_container_width=True):
+        graph_response, graph_error = backend_request(
+            "GET",
+            "/v1/graph/traverse",
+            token=api_token,
+            params={
+                "tenant_id": workspace,
+                "hop_depth": graph_depth,
+                "labels": ",".join(target_labels),
+            },
+        )
+        if graph_error or graph_response is None or not graph_response.ok:
+            show_api_error(graph_response, graph_error)
+        else:
+            graph_payload = extract_payload(graph_response)
+            st.session_state.graph_payload = graph_payload
+            st.success("Graph data retrieved.")
+    graph_payload = st.session_state.get("graph_payload")
+    if graph_payload:
+        st.json(graph_payload)
+        st.info(
+            "To render an interactive network here, return a payload containing "
+            "nodes [{id, label}] and edges [{from, to, label}]."
+        )
+    else:
+        st.info("Load graph data to inspect the backend response.")
 
-url = "{BACKEND_URL}/v1/graph/query"
-headers = {{
-    "Authorization": "Bearer YOUR_ENTERPRISE_API_KEY",
-    "Content-Type": "application/json"
-}}
-payload = {request_body}
+# ------------------------------- History -------------------------------------
+with tab_activity:
+    st.subheader("Recent activity")
+    if st.session_state.search_history:
+        st.dataframe(
+            pd.DataFrame(st.session_state.search_history),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No searches in this session yet.")
+    if st.session_state.upload_results:
+        st.subheader("Latest upload activity")
+        st.dataframe(
+            pd.DataFrame(st.session_state.upload_results),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-response = requests.post(url, headers=headers, json=payload)
-print(response.json())""", language="python")
+# ------------------------------- API diagnostics ----------------------------
+with tab_api:
+    st.subheader("API diagnostics")
+    st.write("Configured base URL:", BACKEND_URL or "Not configured")
+    st.write("Health check:")
+    if health_response is not None:
+        st.write("HTTP status:", health_response.status_code)
+        st.json(service_detail if isinstance(service_detail, (dict, list)) else {"detail": service_detail})
+    else:
+        st.warning(service_detail)
 
-    with sdk_tab_bash:
-        st.code(f"""curl -X POST "{BACKEND_URL}/v1/graph/query" \\
-  -H "Authorization: Bearer YOUR_ENTERPRISE_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{request_body}'""", language="bash")
+    st.markdown("#### Expected API routes")
+    routes = pd.DataFrame(
+        [
+            {
+                "Method": "GET",
+                "Route": "/health",
+                "Purpose": "Service health check",
+            },
+            {
+                "Method": "POST",
+                "Route": "/v1/graph/query",
+                "Purpose": "Retrieve answers and supporting context",
+            },
+            {
+                "Method": "POST",
+                "Route": "/v1/graph/ingest",
+                "Purpose": "Upload and index a document",
+            },
+            {
+                "Method": "GET",
+                "Route": "/v1/graph/traverse",
+                "Purpose": "Return graph nodes and relationships",
+            },
+        ]
+    )
+    st.dataframe(routes, use_container_width=True, hide_index=True)
 
-    with sdk_tab_cypher:
-        st.code(f"""MATCH (vendor_node:Vendor)-
-[relation_link:ISSUED_AUTHENTICATED]->
-(contract_node:Contract)-
-[:CONTAINS_OBLIGATION]->(sla_node:SLA)
-WHERE vendor_node.workspace_isolation_id = '{active_workspace}'
-RETURN vendor_node.normalized_name, contract_node.title, sla_node.penalty_rate
-LIMIT 50;""", language="cypher")
-                  
+    st.warning(
+        "This Streamlit frontend does not itself provide enterprise-grade "
+        "authentication, encryption-at-rest, tenant isolation, or audit guarantees. "
+   
