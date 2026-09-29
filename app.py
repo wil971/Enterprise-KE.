@@ -420,4 +420,4 @@ with tab_activity:
 
 with tab_admin:
     st.subheader("API diagnostics")
-    st.write("Configured base 
+    st.write("Configured base")
