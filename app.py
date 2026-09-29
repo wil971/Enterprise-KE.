@@ -563,7 +563,7 @@ with tab_api:
     )
     st.dataframe(routes, use_container_width=True, hide_index=True)
 
-    st.warning(
+    st.warning()
         "This Streamlit frontend does not itself provide enterprise-grade "
         "authentication, encryption-at-rest, tenant isolation, or audit guarantees. "
    
