@@ -1,163 +1,423 @@
-import uuid
 import asyncio
+import uuid
+from typing import Any, Dict, List, Tuple
+
 from config import MAX_QUERY_RESULTS, NEO4J_DATABASE, logger
-from database import get_driver
+from database import get_driver, run_cypher
 from security import validate_tenant_id, rate_limiter, write_audit_log
 
-async def secure_graph_retrieval(tenant_id: str, topic: str) -> str:
-    """
-    Executes tenant-isolated graph retrieval with rate-limiting, 
-    parameterized Cypher queries, and audit logging.
-    """
-    tenant_id = validate_tenant_id(tenant_id)
 
-    if not topic or not topic.strip():
+MAX_QUERY_LENGTH = 1000
+MAX_DEPTH = 5
+
+
+def validate_search_topic(topic: str) -> str:
+    if not isinstance(topic, str):
+        raise ValueError("Search topic must be a string.")
+
+    topic = topic.strip()
+
+    if not topic:
         raise ValueError("Search topic cannot be empty.")
+
+    if len(topic) > MAX_QUERY_LENGTH:
+        raise ValueError(
+            f"Search topic cannot exceed {MAX_QUERY_LENGTH} characters."
+        )
+
+    return topic
+
+
+def validate_depth(depth: int) -> int:
+    if not isinstance(depth, int):
+        raise ValueError("Graph depth must be an integer.")
+
+    if depth < 1:
+        return 1
+
+    return min(depth, MAX_DEPTH)
+
+
+async def secure_graph_retrieval(
+    tenant_id: str,
+    topic: str,
+) -> str:
+    tenant_id = validate_tenant_id(tenant_id)
+    topic = validate_search_topic(topic)
 
     if not rate_limiter.allow(tenant_id):
         raise RuntimeError("Rate limit exceeded.")
 
     driver = get_driver()
+
     if driver is None:
         raise RuntimeError("Neo4j driver is not configured.")
 
     request_id = str(uuid.uuid4())
 
     query = """
-    MATCH (t:Tenant {id: $tenant_id})-[:OWNS]->(d:Document)-[:MENTIONS]->(e:Entity)
-    WHERE toLower(e.name) CONTAINS toLower($topic)
-    RETURN e.name AS entity, d.title AS source
+    MATCH (t:Tenant {id: $tenant_id})
+          -[:OWNS]->(d:Document)
+          -[:MENTIONS]->(e:Entity)
+
+    WHERE toLower(coalesce(e.name, ''))
+          CONTAINS toLower($topic)
+
+    RETURN
+        e.name AS entity,
+        d.title AS source,
+        d.id AS document_id
+
+    ORDER BY d.updated_at DESC
+
     LIMIT $limit
     """
 
     try:
-        async with driver.session(database=NEO4J_DATABASE) as session:
+        async with driver.session(
+            database=NEO4J_DATABASE
+        ) as session:
             result = await session.run(
                 query,
                 tenant_id=tenant_id,
                 topic=topic,
                 limit=MAX_QUERY_RESULTS,
             )
+
             records = await result.data()
 
         await write_audit_log(
             tenant_id=tenant_id,
             action="graph_retrieval",
             request_id=request_id,
-            metadata={"topic": topic, "results": len(records)},
+            metadata={
+                "topic": topic,
+                "results": len(records),
+            },
         )
 
         if not records:
             return f"No secure knowledge retrieved for '{topic}'."
 
-        results = [f"- {record['entity']} (Source: {record['source']})" for record in records]
-        return "Secure enterprise context:\n" + "\n".join(results)
+        results = []
 
-    except Exception as err:
-        logger.exception(f"Secure graph retrieval failed. request_id={request_id}, error={err}")
-        return "System error: secure retrieval aborted."
+        for record in records:
+            entity = record.get("entity") or "Unknown entity"
+            source = record.get("source") or "Unknown document"
+
+            results.append(
+                f"- {entity} (Source: {source})"
+            )
+
+        return (
+            "Secure enterprise context:\n"
+            + "\n".join(results)
+        )
+
+    except RuntimeError:
+        raise
+
+    except Exception:
+        logger.exception(
+            "Secure graph retrieval failed. request_id=%s",
+            request_id,
+        )
+        raise RuntimeError("Secure retrieval failed.")
 
 
-def hybrid_graph_vector_search(query: str, mode: str = "GraphRAG (Multi-Hop)", depth: int = 2, tenant_id: str = "default_tenant"):
-    """
-    Interface bridging app.py to secure_graph_retrieval.
-    Returns: (answer_string, reasoning_paths_list, lineage_data_dicts, cypher_trace_string)
-    """
+def hybrid_graph_vector_search(
+    query: str,
+    mode: str = "GraphRAG (Multi-Hop)",
+    depth: int = 2,
+    tenant_id: str = "default_tenant",
+) -> Tuple[
+    str,
+    List[str],
+    List[Dict[str, Any]],
+    str,
+]:
+    tenant_id = validate_tenant_id(tenant_id)
+    query = validate_search_topic(query)
+    depth = validate_depth(depth)
+
     request_id = str(uuid.uuid4())
-    
-    cypher_trace = f"""// Executed via retrieval.py (Mode: {mode}, Depth: {depth})
-MATCH (t:Tenant {{id: "{tenant_id}"}})-[:OWNS]->(d:Document)-[:MENTIONS]->(e:Entity)
-WHERE toLower(e.name) CONTAINS toLower("{query}")
-RETURN e.name AS entity, d.title AS source
-LIMIT {MAX_QUERY_RESULTS};"""
+
+    cypher_trace = """
+MATCH (t:Tenant {id: $tenant_id})
+      -[:OWNS]->(d:Document)
+      -[:MENTIONS]->(e:Entity)
+WHERE toLower(coalesce(e.name, ''))
+      CONTAINS toLower($query)
+RETURN
+    e.name AS entity,
+    d.title AS source,
+    d.id AS document_id
+ORDER BY d.updated_at DESC
+LIMIT $limit
+""".strip()
 
     try:
-        # Run async coroutine safely inside sync Streamlit context
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            loop = None
 
-        if loop.is_running():
-            retrieved_text = asyncio.run_coroutine_threadsafe(
-                secure_graph_retrieval(tenant_id, query), loop
-            ).result()
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=1
+            ) as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    secure_graph_retrieval(
+                        tenant_id,
+                        query,
+                    ),
+                )
+                retrieved_text = future.result()
         else:
-            retrieved_text = loop.run_until_complete(secure_graph_retrieval(tenant_id, query))
+            retrieved_text = asyncio.run(
+                secure_graph_retrieval(
+                    tenant_id,
+                    query,
+                )
+            )
 
-        answer = f"Analysis complete for query '{query}' across tenant '{tenant_id}'."
-        
+        if retrieved_text.startswith(
+            "No secure knowledge retrieved"
+        ):
+            answer = retrieved_text
+        else:
+            answer = (
+                f"Graph retrieval completed for '{query}'."
+            )
+
         reasoning_paths = [
-            f"Tenant Validation ➔ Verified tenant context: '{tenant_id}'",
-            f"Graph Traversal (Depth {depth}) ➔ Queried matching nodes using parameterized Cypher",
-            f"Audit Trail ➔ Request ID {request_id} written to security log"
+            (
+                "Tenant Boundary → "
+                f"Search restricted to tenant '{tenant_id}'."
+            ),
+            (
+                "Graph Retrieval → "
+                f"Executed secure graph search using mode '{mode}' "
+                f"with requested depth {depth}."
+            ),
+            (
+                "Audit Trail → "
+                f"Request ID {request_id} generated for this operation."
+            ),
         ]
 
-        # Convert output text lines into structured lineage dicts for app.py DataFrame
-        lineage_data = []
-        if "Secure enterprise context:" in retrieved_text:
-            lines = retrieved_text.replace("Secure enterprise context:\n", "").split("\n")
-            for idx, line in enumerate(lines):
-                if line.startswith("- "):
-                    parts = line.lstrip("- ").split(" (Source: ")
-                    entity_name = parts[0]
-                    doc_name = parts[1].rstrip(")") if len(parts) > 1 else "Unknown"
-                    lineage_data.append({
-                        "Node ID": f"NODE-{1000 + idx}",
-                        "Entity Type": entity_name,
-                        "Document Name": doc_name,
-                        "Match Confidence": "98.5%",
-                        "Status": "Verified"
-                    })
+        lineage_data: List[Dict[str, Any]] = []
 
-        return answer, reasoning_paths, lineage_data, cypher_trace
+        if retrieved_text.startswith(
+            "Secure enterprise context:"
+        ):
+            lines = retrieved_text[
+                len("Secure enterprise context:\n"):
+            ].splitlines()
 
-    except Exception as err:
-        logger.exception(f"Hybrid retrieval execution failed: {err}")
+            for index, line in enumerate(lines):
+                if not line.startswith("- "):
+                    continue
+
+                content = line[2:].strip()
+
+                if " (Source: " in content:
+                    entity_name, source_part = content.split(
+                        " (Source: ",
+                        1,
+                    )
+                    source_name = source_part.rstrip(")")
+                else:
+                    entity_name = content
+                    source_name = "Unknown"
+
+                lineage_data.append(
+                    {
+                        "Node ID": f"ENTITY-{index + 1}",
+                        "Entity": entity_name,
+                        "Document Name": source_name,
+                        "Relationship": "MENTIONS",
+                        "Status": "Retrieved",
+                    }
+                )
+
         return (
-            f"Retrieval error: {str(err)}",
-            ["Execution aborted due to security or runtime error."],
+            answer,
+            reasoning_paths,
+            lineage_data,
+            cypher_trace,
+        )
+
+    except RuntimeError as exc:
+        logger.error(
+            "Graph search failed request_id=%s: %s",
+            request_id,
+            exc,
+        )
+
+        return (
+            "Graph retrieval could not be completed.",
+            [
+                "Retrieval stopped because the secure "
+                "retrieval layer rejected the request."
+            ],
             [],
-            cypher_trace
-        )def execute_graphrag_query(
-    tenant_id: str, 
-    query_text: str, 
-    search_mode: str = "GraphRAG (Multi-Hop)", 
-    max_depth: int = 2
-) -> dict:
-    """Executes graph retrieval and formats output for the Streamlit dashboard."""
+            cypher_trace,
+        )
+
+    except Exception:
+        logger.exception(
+            "Hybrid retrieval failed request_id=%s",
+            request_id,
+        )
+
+        return (
+            "Graph retrieval could not be completed.",
+            [
+                "Retrieval stopped because an internal "
+                "system error occurred."
+            ],
+            [],
+            cypher_trace,
+        )
+
+
+def execute_graphrag_query(
+    tenant_id: str,
+    query_text: str,
+    search_mode: str = "GraphRAG (Multi-Hop)",
+    max_depth: int = 2,
+) -> Dict[str, Any]:
+
+    tenant_id = validate_tenant_id(tenant_id)
+    query_text = validate_search_topic(query_text)
+    max_depth = validate_depth(max_depth)
+
+    if not rate_limiter.allow(tenant_id):
+        return {
+            "answer": "Rate limit exceeded.",
+            "reasoning_path": [
+                "Request rejected by the tenant rate limiter."
+            ],
+            "lineage": [],
+            "cypher_trace": "",
+        }
+
+    request_id = str(uuid.uuid4())
+
     cypher_query = """
-    MATCH (t:Tenant {id: $tenant_id})-[:OWNS]->(d:Document)-[:MENTIONS]->(n)
-    WHERE n.name CONTAINS $query OR d.title CONTAINS $query
-    RETURN d.title AS document, n.name AS entity, labels(n)[0] AS category
-    LIMIT 25
-    """
+MATCH (t:Tenant {id: $tenant_id})
+      -[:OWNS]->(d:Document)
+      -[:MENTIONS]->(n)
+WHERE
+    toLower(coalesce(n.name, ''))
+        CONTAINS toLower($query)
+    OR
+    toLower(coalesce(d.title, ''))
+        CONTAINS toLower($query)
+
+RETURN
+    d.title AS document,
+    n.name AS entity,
+    labels(n)[0] AS category,
+    d.id AS document_id
+
+ORDER BY d.updated_at DESC
+
+LIMIT $limit
+""".strip()
+
     try:
-        results = run_cypher(cypher_query, {"tenant_id": tenant_id, "query": query_text})
-        
+        results = run_cypher(
+            cypher_query,
+            {
+                "tenant_id": tenant_id,
+                "query": query_text,
+                "limit": MAX_QUERY_RESULTS,
+            },
+        )
+
+        entities = list(
+            dict.fromkeys(
+                result.get("entity")
+                for result in results
+                if result.get("entity")
+            )
+        )
+
         if results:
-            entities = list({r.get("entity") for r in results if r.get("entity")})
-            answer = f"Graph search identified relevant entities for '{query_text}': {', '.join(entities[:5])}."
+            answer = (
+                f"Graph search identified "
+                f"{len(results)} relevant graph records "
+                f"for '{query_text}'."
+            )
         else:
-            answer = f"No active graph pathways found for '{query_text}' under tenant '{tenant_id}'."
-            
+            answer = (
+                f"No active graph pathways found for "
+                f"'{query_text}'."
+            )
+
+        reasoning_path = [
+            (
+                "Tenant Boundary → "
+                f"Query restricted to tenant '{tenant_id}'."
+            ),
+            (
+                "Graph Traversal → "
+                f"Search mode '{search_mode}' "
+                f"with maximum depth {max_depth}."
+            ),
+            (
+                "Result Evaluation → "
+                f"{len(results)} graph records returned."
+            ),
+        ]
+
+        try:
+            asyncio.run(
+                write_audit_log(
+                    tenant_id=tenant_id,
+                    action="graphrag_query",
+                    request_id=request_id,
+                    metadata={
+                        "query": query_text,
+                        "results": len(results),
+                        "mode": search_mode,
+                        "depth": max_depth,
+                    },
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Failed to audit GraphRAG query request_id=%s",
+                request_id,
+            )
+
         return {
             "answer": answer,
-            "reasoning_path": [
-                f"Validated multi-tenant boundary for '{tenant_id}'",
-                f"Traversed graph nodes up to depth {max_depth}",
-                f"Evaluated {len(results)} matching entity triples"
-            ],
-            "lineage": results if results else [],
-            "cypher_trace": cypher_query.strip()
+            "reasoning_path": reasoning_path,
+            "lineage": results,
+            "cypher_trace": cypher_query,
+            "entities": entities[:10],
+            "request_id": request_id,
         }
-    except Exception as e:
+
+    except Exception:
+        logger.exception(
+            "GraphRAG query failed request_id=%s",
+            request_id,
+        )
+
         return {
-            "answer": f"Graph retrieval error: {str(e)}",
-            "reasoning_path": ["Traversal failed during Cypher execution."],
+            "answer": "Graph retrieval could not be completed.",
+            "reasoning_path": [
+                "Traversal failed during secure Cypher execution."
+            ],
             "lineage": [],
-            "cypher_trace": cypher_query.strip()
-        }
-        
-        
+            "cypher_trace": cypher_query,
+            "entities": [],
+            "request_id": request_id,
+                }
