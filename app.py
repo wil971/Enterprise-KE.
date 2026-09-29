@@ -99,7 +99,7 @@ DEFAULTS = {
     "upload_results": [],
     "last_query_result": None,
     "graph_payload": None,
-}for state_key, default_value in DEFAULTS.items():
+for state_key, default_value in DEFAULTS.items():
     if state_key not in st.session_state:
         st.session_state[state_key] = default_value
 
