@@ -358,7 +358,6 @@ with tab_ingest:
     
     uploaded_files = st.file_uploader(
         "Drop target documents for automatic entity extraction",
-        type=["pdf", "docx", "csv", "parquet"],
         accept_multiple_files=True,
         key="pipeline_file_uploader"
     )
