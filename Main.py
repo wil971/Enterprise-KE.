@@ -722,7 +722,7 @@ async def homepage(request: Request) -> HTMLResponse:
                 </div>
 
                 <div class="status">
-                    {status_symbol} {status_lab                    {status_label}
+                    {status_symbol} {status_lab}                  {status_label}
                 </div>
 
                 <div class="database">
