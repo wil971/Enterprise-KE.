@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
-from config import (
+from config import ()
     APP_NAME,
     ENVIRONMENT,
     MAX_DOCUMENT_LENGTH,
