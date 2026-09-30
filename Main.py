@@ -16,7 +16,6 @@ from config import ()
     MAX_DOCUMENT_TITLE_LENGTH,
     MAX_QUERY_LENGTH,
     logger,
-)
 
 from database import get_driver, close_driver, init_driver
 
