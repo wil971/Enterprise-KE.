@@ -837,7 +837,7 @@ async def write_audit_log(
             if record is None:
                 raise AuditLogError(
                     "Audit log could not be associated "
-                    "with therecord = await result.single()
+                    record = await result.single()
 
             if record is None:
                 raise AuditLogError(
