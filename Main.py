@@ -9,13 +9,13 @@ from fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
 
-from config import ()
+from config import (
     APP_NAME,
     ENVIRONMENT,
     MAX_DOCUMENT_LENGTH,
     MAX_DOCUMENT_TITLE_LENGTH,
     MAX_QUERY_LENGTH,
-    logger,
+    logger,)
 
 from database import get_driver, close_driver, init_driver
 
