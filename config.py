@@ -9,8 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_NAME = os.getenv()
-    
+APP_NAME = os.getenv(
     "APP_NAME",
     "AetherEnterpriseKnowledgeHub",
 ).strip()
@@ -300,4 +299,4 @@ def get_configuration_status() -> dict:
             "max_graph_depth": MAX_GRAPH_DEPTH,
             "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
         },
-}
+    }
