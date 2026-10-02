@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastmcp import FastMCP
 from config import APP_NAME, ENVIRONMENT, logger
 from database import get_driver, close_driver, init_driver
-from security import validate_tenant_id, rate_limiter, write_audit_log
+from security import validate_tenant_id, rate_limiter
 from refiner import extract_business_entities, validate_extraction, store_business_document
 from retrieval import secure_graph_retrieval
 
