@@ -2,12 +2,10 @@ fastmcp>=4.0,<5
 neo4j>=5.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-streamlit
 pandas
 pyvis
 nest_asyncio
 pypdf
-python-docxstreamlit
 openai
 google-genai
 
