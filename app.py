@@ -403,8 +403,8 @@ with tab_query:
         with st.status("Tracing Subgraph Dependencies across FastMCP Router...", expanded=True) as status:
             st.write("🔹 Form Ingestion -> Serializing Search Request Vector...")
             time.sleep(0.1)
-            st.write(f"🔹 Traversing # 
-            ------------------------------------------------------------------------------
+            st.write(f"🔹 Traversing)
+            #------------------------------------------------------------------------------
 # TAB 2: AUDITED FILE EXTRACTION PIPELINE
 # ------------------------------------------------------------------------------
 with tab_ingest:
