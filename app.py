@@ -552,7 +552,7 @@ with tab_query:
     user_query = st.text_input(
         "Enter Enterprise Subgraph Query Target", 
         value="What are the contractual liability thresholds and uptime SLA penalties for core vendor software agreements?",
-        key="query_input"
+        key="query_input_2"
     )
     
     col_act, _ = st.columns([1, 2])
