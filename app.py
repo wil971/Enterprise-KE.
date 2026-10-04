@@ -36,7 +36,7 @@ st.markdown("""
         border-right: 1px solid #1e293b !important;
     }
     
-    /* Interactive Telemetry Containers (Gloss Glassmorphism Card Code) */
+    /* Interactive Telemetry Containers */
     .telemetry-card {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         border: 1px solid #334155;
@@ -326,8 +326,7 @@ tab_query, tab_ingest, tab_visualizer, tab_api_control = st.tabs([
     "🕸️ INTERACTIVE WEBGL KNOWLEDGE CANVAS",
     "⚙️ API CONTROL ROOM"
 ])
-
-# ------------------------------------------------------------------------------
+                # ------------------------------------------------------------------------------
 # TAB 1: CONTEXT RETRIEVAL INTERFACE
 # ------------------------------------------------------------------------------
 with tab_query:
@@ -343,15 +342,15 @@ with tab_query:
         run_query = st.button("EXECUTE FAST_MCP MULTI-HOP GRAPH SEARCH", use_container_width=True)
     
     if run_query or user_query:
-        # 1. EXECUTIVE SYNTHESIZED ANSWER BOX (PROPERLY INTEGRATED FROM SCREENSHOT 1)
-        st.markdown("""
+        # EXECUTIVE SYNTHESIZED ANSWER BOX
+        st.markdown(f"""
         <div class="executive-summary-box">
             <div style="display:flex; align-items:center; margin-bottom:12px;">
                 <span style="font-size:1.3rem; margin-right:8px;">✨</span>
                 <h4 style="color:#ffffff; margin:0; font-weight:800; font-size:1.1rem; letter-spacing:0.02em;">Synthesized Context Executive Summary</h4>
             </div>
             <p style="color:#cbd5e1; font-size:0.92rem; margin-bottom:12px; line-height:1.6;">
-                Based on multi-hop index traversal across active enterprise agreements in <b>{}</b>:
+                Based on multi-hop index traversal across active enterprise agreements in <b>{active_workspace}</b>:
             </p>
             <ul style="color:#f1f5f9; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:0;">
                 <li><b>Liability Threshold Cap:</b> Contractual liability is strictly capped at <b>12 months of recurring fees</b> for standard claims, with uncapped exposure limited solely to gross negligence or breach of confidentiality.</li>
@@ -359,9 +358,9 @@ with tab_query:
                 <li><b>Financial Penalties:</b> Outages exceeding 2 consecutive hours trigger a <b>5% service credit fee deduction</b> against monthly invoices, escalating to 15% for tier-1 service disruptions exceeding 8 hours.</li>
             </ul>
         </div>
-        """.format(active_workspace), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         
-        # 2. GROUNDED SOURCE ARTIFACTS (PROPERLY INTEGRATED FROM SCREENSHOT 1)
+        # GROUNDED SOURCE ARTIFACTS
         st.markdown("<h4 style='color:#ffffff; font-size:1rem; font-weight:700;'>📄 Grounded Source Artifacts</h4>", unsafe_allow_html=True)
         art1, art2, art3, art4 = st.columns(4)
         with art1:
@@ -400,11 +399,19 @@ with tab_query:
         st.markdown("<hr style='border-color:#1e293b; margin:25px 0;'>", unsafe_allow_html=True)
         st.markdown("<h4 style='color:#38bdf8;'>Trace Lineage & Detailed Audit Trail</h4>", unsafe_allow_html=True)
         
+        # STATUS TRAVERSAL BLOCK
         with st.status("Tracing Subgraph Dependencies across FastMCP Router...", expanded=True) as status:
             st.write("🔹 Form Ingestion -> Serializing Search Request Vector...")
             time.sleep(0.1)
-            st.write(f"🔹 Traversing)
-            #------------------------------------------------------------------------------
+            st.write(f"🔹 Traversing target labels: {', '.join(target_labels)} up to {max_depth} hop depth...")
+            time.sleep(0.1)
+            st.write("🔹 Resolving Vector Hybrid Nearest Neighbors...")
+            time.sleep(0.1)
+            st.write("🔹 Synthesizing Cypher Graph Path Traversal...")
+            time.sleep(0.1)
+            status.update(label="Subgraph Traversal & Synthesis Complete 🟢", state="complete", expanded=False)
+
+# ------------------------------------------------------------------------------
 # TAB 2: AUDITED FILE EXTRACTION PIPELINE
 # ------------------------------------------------------------------------------
 with tab_ingest:
@@ -494,7 +501,7 @@ with tab_ingest:
     st.dataframe(ingested_df, use_container_width=True)
 
 # ------------------------------------------------------------------------------
-# TAB 3: INTERACTIVE WEBGL KNOWLEDGE CANVAS (RICH ENTERPRISE NEO4J GRAPH)
+# TAB 3: INTERACTIVE WEBGL KNOWLEDGE CANVAS
 # ------------------------------------------------------------------------------
 with tab_visualizer:
     st.markdown("<h3 style='color:#ffffff;'>Interactive Subgraph Explorer Canvas</h3>", unsafe_allow_html=True)
@@ -507,7 +514,6 @@ with tab_visualizer:
     with c_vis3:
         st.selectbox("Coloring Theme", ["Tenant Partition Scheme", "Entity Type Classification", "Risk Heatmap Cluster"])
 
-    # UPGRADED HIGH-DENSITY ENTERPRISE GRAPH WITH EXPLICIT NEO4J RELATIONSHIP LABELS
     html_graph_code = """
     <!DOCTYPE html>
     <html>
@@ -653,4 +659,4 @@ print(response.json())""", language="python")
 WHERE vendor_node.workspace_isolation_id = '{active_workspace}'
 RETURN vendor_node.normalized_name, contract_node.title, sla_node.penalty_rate
 LIMIT 50;""", language="cypher")
-        
+    
