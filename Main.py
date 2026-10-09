@@ -1,29 +1,31 @@
-# ============================================================================
-# app.py - PART 1/4: CONFIGURATION, DATABASE MODELS & SECURITY
-# Enterprise Intelligence Platform (Glean Architecture Core)
-# ============================================================================
-
 import os
 import time
+import uuid
+import hmac
 import logging
 import asyncio
+from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any, Union
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field
 import jwt
 
-# SQLAlchemy Async Imports for Production PostgreSQL Persistence
+# FastMCP Protocol Integration
+from fastmcp import FastMCP
+
+# SQLAlchemy Async Imports
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, String, DateTime, Text, JSON, Boolean, Integer, Index
+from sqlalchemy import Column, String, DateTime, Text, JSON, Boolean, Integer, Index, select
 
 # ----------------------------------------------------------------------------
-# 1.1 LOGGING & CONFIGURATION
+# 1.1 LOGGING, CONFIGURATION & FASTMCP SETUP
 # ----------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -33,13 +35,18 @@ logger = logging.getLogger("EnterpriseIntelligence.Core")
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "prod-enterprise-secret-key-render-2026-v1")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24-hour persistent enterprise session
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-# Database URL support for Render PostgreSQL (asyncpg driver)
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "sqlite+aiosqlite:///:memory:"  # In-memory fallback for immediate zero-config start
-)
+# Initializes FastMCP Instance (Fixes 'NameError: name mcp is not defined')
+mcp = FastMCP("EnterpriseIntelligence")
+
+class Settings:
+    PROJECT_NAME: str = "Enterprise Context & Intelligence Platform"
+
+settings = Settings()
+
+# Database Engine Configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
@@ -50,59 +57,35 @@ Base = declarative_base()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-# ----------------------------------------------------------------------------
-# 1.2 DATABASE MODELS (SQLAlchemy Persistent Audit Ledger & Tenants)
-# ----------------------------------------------------------------------------
-class AuditLogModel(Base):
-    __tablename__ = "audit_logs"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    tenant_id = Column(String(128), nullable=False, index=True)
-    user_id = Column(String(128), nullable=False, index=True)
-    action = Column(String(64), nullable=False, index=True)
-    resource = Column(String(256), nullable=False)
-    metadata_json = Column(JSON, nullable=True)
-
-class EnterpriseTenantModel(Base):
-    __tablename__ = "tenants"
-
-    tenant_id = Column(String(128), primary_key=True)
-    company_name = Column(String(256), nullable=False)
-    subscription_tier = Column(String(64), default="STANDARD")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    is_active = Column(Boolean, default=True)
-
-# Index for multi-tenant isolation audit log queries
-Index("idx_tenant_user_audit", AuditLogModel.tenant_id, AuditLogModel.user_id)
+async def get_db_session():
+    async with AsyncSessionLocal() as session:
+        yield session
 
 # ----------------------------------------------------------------------------
-# 1.3 SECURITY & TOKEN AUTHENTICATION FUNCTIONS
+# 1.2 MODERN FASTAPI LIFESPAN (Fixes Deprecation Warning)
 # ----------------------------------------------------------------------------
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Generates a enterprise-signed JWT token carrying Tenant & Subscription Claims."""
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database connection initialized and schema verified.")
+    yield
 
-def decode_access_token(token: str) -> dict:
-    """Decodes JWT token and validates signature integrity."""
-    try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired. Please re-authenticate.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate enterprise credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version="2.0.0",
+    description="Glean-grade Multi-Tenant Enterprise Search & Knowledge Graph Engine deployed on Render",
+    lifespan=lifespan
 )
-    # ============================================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# ============================================================================
 # app.py - PART 2/4: ENUMS & DATA CONTRACT SCHEMAS
 # ============================================================================
 
@@ -236,7 +219,7 @@ class FastMCPToolCallResponse(BaseModel):
     tool_name: str
     result: Dict[str, Any]
     execution_time_ms: float
-    # ============================================================================
+# ============================================================================
 # app.py - PART 3/4: BUSINESS LOGIC ENGINES & FASTMCP DISPATCHER
 # ============================================================================
 
@@ -749,8 +732,8 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    import mcp
+    mcp.run(transport="sse", host="0.0.0.0", port=8000)
     # ============================================================================
 # app.py - PART 5/8: MULTI-HOP GRAPH TRAVERSAL & HYBRID RAG ENGINE
 # ============================================================================
@@ -850,7 +833,7 @@ class HybridSemanticRanker:
 
         raw_score = (keyword_score / (len(query_terms) + 1)) * clearance_multiplier
         return round(min(raw_score, 0.99), 4)
-        # ============================================================================
+    # ============================================================================
 # app.py - PART 6/8: FASTMCP TOOL REGISTRY & AGENT FUNCTIONS
 # ============================================================================
 
@@ -1059,4 +1042,5 @@ async def root_entry():
         "mcp_endpoint": "/mcp",
         "health": "/health"
     }
+    
     
