@@ -732,8 +732,9 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    import mcp
-    mcp.run(transport="sse", host="0.0.0.0", port=8000)
+    import uvicorn
+    uvicorn.run("Main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    
     # ============================================================================
 # app.py - PART 5/8: MULTI-HOP GRAPH TRAVERSAL & HYBRID RAG ENGINE
 # ============================================================================
