@@ -415,15 +415,11 @@ async def login_with_work_email(
     request: WorkEmailLoginRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Standard Work Email + Password Authentication.
-    Resolves domain to Tenant ID automatically.
-    """
-    domain = request.email.split("@")[-1]
+    domain = request.email.split("@")[-1] if "@" in request.email else "enterprise-corp.com"
     mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
     mock_user_id = f"usr_{abs(hash(request.email))}"
     
-    tier = SubscriptionTier.PRO_ENTERPRISE if "enterprise" in domain else SubscriptionTier.STANDARD
+    tier = SubscriptionTier.PRO_ENTERPRISE if any(x in domain for x in ["enterprise", "corp", "tech", "client"]) else SubscriptionTier.STANDARD
 
     token_data = {
         "sub": mock_user_id,
@@ -432,7 +428,7 @@ async def login_with_work_email(
         "roles": ["employee"],
         "tier": tier.value
     }
-    
+
     token = create_access_token(token_data)
 
     background_tasks.add_task(
@@ -452,38 +448,34 @@ async def login_with_work_email(
     )
 
 @app.post("/api/v1/auth/google", response_model=TokenResponse, tags=["Authentication"])
-async def login_with_google(
+async def login_google(
     request: GoogleAuthRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Google Workspace OAuth Authentication.
-    Verifies Google ID Token and auto-provisions tenant isolation.
-    """
-    mock_google_email = "user@enterprise-corp.com"
-    domain = mock_google_email.split("@")[-1]
+    user_email = request.email or "user@gmail.com"
+    domain = user_email.split("@")[-1] if "@" in user_email else "gmail.com"
     
     mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
-    mock_user_id = f"usr_google_{abs(hash(mock_google_email))}"
+    mock_user_id = f"usr_{abs(hash(user_email))}"
     tier = SubscriptionTier.PRO_ENTERPRISE
 
     token_data = {
         "sub": mock_user_id,
-        "email": mock_google_email,
+        "email": user_email,
         "tenant_id": mock_tenant_id,
-        "roles": ["employee"],
+        "roles": ["WORKSPACE_USER"],
         "tier": tier.value
     }
     
     token = create_access_token(token_data)
-
+    
     background_tasks.add_task(
         create_audit_log,
         mock_tenant_id,
         mock_user_id,
         AuditAction.USER_LOGIN_GOOGLE,
         "AUTH_SERVICE",
-        {"method": "google_oauth", "email": mock_google_email}
+        {"method": "google_oauth", "email": user_email}
     )
 
     return TokenResponse(
@@ -492,6 +484,7 @@ async def login_with_google(
         tenant_id=mock_tenant_id,
         tier=tier
     )
+    
 
 # ----------------------------------------------------------------------------
 # 4.3 GLEAN-GRADE UNIFIED SEARCH & SYNTHESIS ENGINE
