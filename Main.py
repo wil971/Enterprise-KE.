@@ -127,7 +127,10 @@ class WorkEmailLoginRequest(BaseModel):
     password: str
 
 class GoogleAuthRequest(BaseModel):
-    id_token: str
+    email: Optional[str] = "user@gmail.com"
+    password: Optional[str] = None
+    id_token: Optional[str] = "mock_token"
+    
 
 class TokenResponse(BaseModel):
     access_token: str
