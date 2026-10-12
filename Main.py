@@ -411,15 +411,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserContext:
 # 4.2 AUTHENTICATION ENDPOINTS
 # ----------------------------------------------------------------------------
 @app.post("/api/v1/auth/login", response_model=TokenResponse, tags=["Authentication"])
-async def login_with_work_email(
-    request: WorkEmailLoginRequest,
-    background_tasks: BackgroundTasks
-):
+async def login_with_work_email(request: WorkEmailLoginRequest):
     domain = request.email.split("@")[-1] if "@" in request.email else "enterprise-corp.com"
     mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
     mock_user_id = f"usr_{abs(hash(request.email))}"
-    
-    tier = SubscriptionTier.PRO_ENTERPRISE if any(x in domain for x in ["enterprise", "corp", "tech", "client"]) else SubscriptionTier.STANDARD
+    tier = SubscriptionTier.PRO_ENTERPRISE
 
     token_data = {
         "sub": mock_user_id,
@@ -431,15 +427,6 @@ async def login_with_work_email(
 
     token = create_access_token(token_data)
 
-    background_tasks.add_task(
-        create_audit_log,
-        mock_tenant_id,
-        mock_user_id,
-        AuditAction.USER_LOGIN,
-        "AUTH_SERVICE",
-        {"method": "work_email", "email": request.email}
-    )
-
     return TokenResponse(
         access_token=token,
         user_id=mock_user_id,
@@ -448,11 +435,8 @@ async def login_with_work_email(
     )
 
 @app.post("/api/v1/auth/google", response_model=TokenResponse, tags=["Authentication"])
-async def login_google(
-    request: GoogleAuthRequest,
-    background_tasks: BackgroundTasks
-):
-    user_email = request.email or "user@gmail.com"
+async def login_google(request: GoogleAuthRequest):
+    user_email = request.email
     domain = user_email.split("@")[-1] if "@" in user_email else "gmail.com"
     
     mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
@@ -468,15 +452,6 @@ async def login_google(
     }
     
     token = create_access_token(token_data)
-    
-    background_tasks.add_task(
-        create_audit_log,
-        mock_tenant_id,
-        mock_user_id,
-        AuditAction.USER_LOGIN_GOOGLE,
-        "AUTH_SERVICE",
-        {"method": "google_oauth", "email": user_email}
-    )
 
     return TokenResponse(
         access_token=token,
@@ -484,6 +459,7 @@ async def login_google(
         tenant_id=mock_tenant_id,
         tier=tier
     )
+    
     
 
 # ----------------------------------------------------------------------------
