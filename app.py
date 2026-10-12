@@ -155,9 +155,9 @@ if not st.session_state.access_token:
                                     st.success("Authenticated successfully! Loading workspace...")
                                     st.rerun()
                                 else:
-                                    st.error("Invalid work email or password.")
+                                    st.error(f"Login failed ({res.status_code}): {res.text}")
                             except Exception as e:
-                                st.error("Connection error. Please verify network.")
+                                st.error(f"Connection error: {str(e)}")
 
         # TAB 2: GOOGLE ACCOUNT (Email + Password)
         with auth_tab2:
@@ -186,9 +186,9 @@ if not st.session_state.access_token:
                                     st.success(f"Welcome back, {google_email}!")
                                     st.rerun()
                                 else:
-                                    st.error("Invalid Google credentials.")
+                                    st.error(f"Login failed ({res.status_code}): {res.text}")
                             except Exception as e:
-                                st.error("Connection error. Please verify network.")
+                                st.error(f"Connection error: {str(e)}")
 
     st.stop()
 
@@ -230,4 +230,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-            
+                                    
