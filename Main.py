@@ -439,29 +439,42 @@ async def login_with_work_email(request: WorkEmailLoginRequest):
 
 @app.post("/api/v1/auth/google", response_model=TokenResponse, tags=["Authentication"])
 async def login_google(request: GoogleAuthRequest):
-    user_email = request.email
-    domain = user_email.split("@")[-1] if "@" in user_email else "gmail.com"
-    
-    mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
-    mock_user_id = f"usr_{abs(hash(user_email))}"
-    tier = SubscriptionTier.PRO_ENTERPRISE
+    try:
+        id_info = id_token.verify_oauth2_token(
+            request.id_token, 
+            google_requests.Request(), 
+            GOOGLE_CLIENT_ID
+        )
 
-    token_data = {
-        "sub": mock_user_id,
-        "email": user_email,
-        "tenant_id": mock_tenant_id,
-        "roles": ["WORKSPACE_USER"],
-        "tier": tier.value
-    }
-    
-    token = create_access_token(token_data)
+        user_email = id_info.get("email")
+        if not user_email:
+            raise HTTPException(status_code=400, detail="Google token missing email information.")
 
-    return TokenResponse(
-        access_token=token,
-        user_id=mock_user_id,
-        tenant_id=mock_tenant_id,
-        tier=tier
-    )
+        domain = user_email.split("@")[-1] if "@" in user_email else "gmail.com"
+        mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
+        mock_user_id = f"usr_{abs(hash(user_email))}"
+        tier = SubscriptionTier.PRO_ENTERPRISE
+
+        token_data = {
+            "sub": mock_user_id,
+            "email": user_email,
+            "tenant_id": mock_tenant_id,
+            "roles": ["WORKSPACE_USER"],
+            "tier": tier.value,
+        }
+
+        token = create_access_token(token_data)
+
+        return TokenResponse(
+            access_token=token,
+            user_id=mock_user_id,
+            tenant_id=mock_tenant_id,
+            tier=tier
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid Google authentication token: {str(e)}")
+        
     
     
 
