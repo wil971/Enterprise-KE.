@@ -38,6 +38,7 @@ logger = logging.getLogger("EnterpriseIntelligence.Core")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "prod-enterprise-secret-key-render-2026-v1")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+GOOGLE_CLIENT_ID = "29092714487-abig455o3bs1b2vhjkkiv5o5343dqn82.apps.googleusercontent.com"
 
 # Initializes FastMCP Instance (Fixes 'NameError: name mcp is not defined')
 mcp = FastMCP("EnterpriseIntelligence")
