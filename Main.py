@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field
 import jwt
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 # FastMCP Protocol Integration
 from fastmcp import FastMCP
