@@ -5,6 +5,7 @@
 import os
 import streamlit as st
 import requests
+from streamlit_oauth import OAuth2Component
 
 st.set_page_config(
     page_title="Enterprise Intelligence Platform",
@@ -98,6 +99,20 @@ if "BACKEND_URL" in st.secrets:
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
+# Initialize Google OAuth Component using Secrets
+CLIENT_ID = st.secrets["google_oauth"]["client_id"]
+CLIENT_SECRET = st.secrets["google_oauth"]["client_secret"]
+REDIRECT_URI = st.secrets["google_oauth"]["redirect_uri"]
+
+oauth2 = OAuth2Component(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    "https://accounts.google.com/o/oauth2/v2/auth",
+    "https://oauth2.googleapis.com/token",
+    "https://oauth2.googleapis.com/token",
+    "https://oauth2.googleapis.com/revoke"
+)
+
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
 if "user_info" not in st.session_state:
@@ -159,36 +174,49 @@ if not st.session_state.access_token:
                             except Exception as e:
                                 st.error(f"Connection error: {str(e)}")
 
-        # TAB 2: GOOGLE ACCOUNT (Email + Password)
+        # TAB 2: GOOGLE ACCOUNT (True OIDC / SSO Redirect)
         with auth_tab2:
-            with st.form("google_login_form"):
-                google_email = st.text_input("Google Account Email", placeholder="user@gmail.com", value="")
-                google_password = st.text_input("Google Password", type="password", placeholder="••••••••••••", value="")
+            st.markdown(
+                """
+                <div style="text-align: center; margin-bottom: 1.5rem;">
+                    <p style="color: #94a3b8; font-size: 0.95rem;">Authenticate securely using your official Google account.</p>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            # Render the official Google OAuth button
+            result = oauth2.authorize_button(
+                name="Sign in with Google",
+                icon="https://www.google.com/favicon.ico",
+                redirect_uri=REDIRECT_URI,
+                scope="openid email profile",
+                key="google_sso_btn",
+            )
+            
+            # Handle the token returned by Google after successful login
+            if result and "token" in result:
+                token_data = result["token"]
+                id_token_val = token_data.get("id_token")
                 
-                st.markdown("<br>", unsafe_allow_html=True)
-                submit_google = st.form_submit_button("Sign In with Google Account", use_container_width=True, type="primary")
-
-                if submit_google:
-                    if not google_email or not google_password:
-                        st.error("Please enter both your Google email and password.")
-                    else:
-                        with st.spinner("Authenticating Google Workspace..."):
-                            try:
-                                res = requests.post(
-                                    f"{BACKEND_URL}/api/v1/auth/google",
-                                    json={"email": google_email, "password": google_password, "id_token": "mock_token"},
-                                    timeout=30
-                                )
-                                if res.status_code == 200:
-                                    data = res.json()
-                                    st.session_state.access_token = data.get("access_token")
-                                    st.session_state.user_info = data
-                                    st.success(f"Welcome back, {google_email}!")
-                                    st.rerun()
-                                else:
-                                    st.error(f"Login failed ({res.status_code}): {res.text}")
-                            except Exception as e:
-                                st.error(f"Connection error: {str(e)}")
+                if id_token_val:
+                    with st.spinner("Verifying Google secure token with backend..."):
+                        try:
+                            res = requests.post(
+                                f"{BACKEND_URL}/api/v1/auth/google",
+                                json={"id_token": id_token_val},
+                                timeout=30
+                            )
+                            if res.status_code == 200:
+                                data = res.json()
+                                st.session_state.access_token = data.get("access_token")
+                                st.session_state.user_info = data
+                                st.success("Google SSO Authenticated Successfully!")
+                                st.rerun()
+                            else:
+                                st.error(f"Authentication failed ({res.status_code}): {res.text}")
+                        except Exception as e:
+                            st.error(f"Connection error: {str(e)}")
 
     st.stop()
 
@@ -230,4 +258,3 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-                                    
