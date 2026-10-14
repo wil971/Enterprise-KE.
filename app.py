@@ -99,10 +99,14 @@ if "BACKEND_URL" in st.secrets:
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
-# Initialize Google OAuth Component using Secrets
-CLIENT_ID = st.secrets["google_oauth"]["client_id"]
-CLIENT_SECRET = st.secrets["google_oauth"]["client_secret"]
-REDIRECT_URIS = st.secrets["google_oauth"]["redirect_uri"]
+# Initialize Google OAuth Component using the 'web' credentials structure
+CLIENT_ID = st.secrets["web"]["client_id"]
+CLIENT_SECRET = st.secrets["web"]["client_secret"]
+
+# Google's JSON format names it 'redirect_uris' (plural list)
+redirect_val = st.secrets["web"]["redirect_uris"]
+REDIRECT_URI = redirect_val[0] if isinstance(redirect_val, list) else redirect_val
+
 
 oauth2 = OAuth2Component(
     CLIENT_ID,
