@@ -102,7 +102,7 @@ else:
 # Initialize Google OAuth Component using Secrets
 CLIENT_ID = st.secrets["google_oauth"]["client_id"]
 CLIENT_SECRET = st.secrets["google_oauth"]["client_secret"]
-REDIRECT_URI = st.secrets["google_oauth"]["redirect_uri"]
+REDIRECT_URIS = st.secrets["google_oauth"]["redirect_uri"]
 
 oauth2 = OAuth2Component(
     CLIENT_ID,
