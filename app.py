@@ -93,21 +93,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Resolve Backend URL
+# Resolve Backend URL Safely
 if "BACKEND_URL" in st.secrets:
     BACKEND_URL = st.secrets["BACKEND_URL"].rstrip("/")
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
-# Initialize Google OAuth Component 
-CLIENT_ID = st.secrets["google_oauth"]["client_id"]
-CLIENT_SECRET = st.secrets["google_oauth"]["client_secret"]
-REDIRECT_URI = st.secrets["google_oauth"]["redirect_uri"]
+# Initialize Google OAuth Component Safely (Supports [web] or [google_oauth] blocks)
+web_secrets = st.secrets.get("web", st.secrets.get("google_oauth", {}))
 
-# Google's JSON format names it 'redirect_uris' (plural list)
-redirect_val = st.secrets["web"]["redirect_uris"]
-REDIRECT_URI = redirect_val[0] if isinstance(redirect_val, list) else redirect_val
+CLIENT_ID = web_secrets.get("client_id", "")
+CLIENT_SECRET = web_secrets.get("client_secret", "")
 
+redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", ""))
+if isinstance(redirect_val, list) and len(redirect_val) > 0:
+    REDIRECT_URI = redirect_val[0]
+else:
+    REDIRECT_URI = str(redirect_val)
 
 oauth2 = OAuth2Component(
     CLIENT_ID,
@@ -263,3 +265,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
+                
