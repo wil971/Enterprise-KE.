@@ -100,7 +100,7 @@ else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
 # Initialize Google OAuth Component 
-CLIENT_ID = st.secret["client_id"]
+CLIENT_ID =["client_id"]
 CLIENT_SECRET = st.secrets["google_oauth"]["client_secret"]
 REDIRECT_URI = st.secrets["google_oauth"]["redirect_uri"]
 
