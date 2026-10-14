@@ -99,19 +99,18 @@ if "BACKEND_URL" in st.secrets:
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
-# Initialize Google OAuth Component Safely (Supports [web] or [google_oauth] blocks)
-web_secrets = st.secrets.get("web", st.secrets.get("google_oauth", {}))
+# Initialize Google OAuth Component matching exactly the [web] JSON structure
+web_secrets = st.secrets.get("web", {})
 
 CLIENT_ID = web_secrets.get("client_id", "")
 CLIENT_SECRET = web_secrets.get("client_secret", "")
 
-redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", ""))
+redirect_val = web_secrets.get("redirect_uris", "")
 if isinstance(redirect_val, list) and len(redirect_val) > 0:
     REDIRECT_URI = redirect_val[0]
 else:
     REDIRECT_URI = str(redirect_val)
 
-# Clean initialization with exact required parameters to prevent MissingRevokeTokenAuthMethodError
 oauth2 = OAuth2Component(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -264,4 +263,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-            
+        
