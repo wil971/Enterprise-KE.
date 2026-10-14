@@ -100,7 +100,7 @@ else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
 # Initialize Google OAuth Component using the 'web' credentials structure
-CLIENT_ID = st.secrets["web"]["client_id"]
+CLIENT_ID = st.secrets["web"]["client_ID"]
 CLIENT_SECRET = st.secrets["web"]["client_secret"]
 
 # Google's JSON format names it 'redirect_uris' (plural list)
