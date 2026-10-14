@@ -111,13 +111,12 @@ if isinstance(redirect_val, list) and len(redirect_val) > 0:
 else:
     REDIRECT_URI = str(redirect_val)
 
+# Clean initialization with exact required parameters to prevent MissingRevokeTokenAuthMethodError
 oauth2 = OAuth2Component(
     CLIENT_ID,
     CLIENT_SECRET,
     "https://accounts.google.com/o/oauth2/v2/auth",
-    "https://oauth2.googleapis.com/token",
-    "https://oauth2.googleapis.com/token",
-    "https://oauth2.googleapis.com/revoke"
+    "https://oauth2.googleapis.com/token"
 )
 
 if "access_token" not in st.session_state:
@@ -265,4 +264,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-                
+            
