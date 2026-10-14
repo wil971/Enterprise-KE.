@@ -99,18 +99,40 @@ if "BACKEND_URL" in st.secrets:
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
-# Initialize Google OAuth Component matching exactly the [web] JSON structure
-web_secrets = st.secrets.get("web", {})
+# ============================================================================
+# ROBUST SECRETS RESOLUTION & OAUTH INITIALIZATION
+# ============================================================================
+# Check [web], [google_oauth], or fall back directly to root st.secrets
+if "web" in st.secrets:
+    web_secrets = st.secrets["web"]
+elif "google_oauth" in st.secrets:
+    web_secrets = st.secrets["google_oauth"]
+else:
+    web_secrets = st.secrets
 
-CLIENT_ID = web_secrets.get("client_id", "")
-CLIENT_SECRET = web_secrets.get("client_secret", "")
+CLIENT_ID = web_secrets.get("client_id", st.secrets.get("client_id", ""))
+CLIENT_SECRET = web_secrets.get("client_secret", st.secrets.get("client_secret", ""))
 
-redirect_val = web_secrets.get("redirect_uris", "")
+redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", st.secrets.get("redirect_uris", st.secrets.get("redirect_uri", ""))))
 if isinstance(redirect_val, list) and len(redirect_val) > 0:
     REDIRECT_URI = redirect_val[0]
 else:
     REDIRECT_URI = str(redirect_val)
 
+# Fallback if REDIRECT_URI is empty string
+if not REDIRECT_URI:
+    REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
+
+# Automated Sanitization: Fixes Google's JSON .app.com mismatch typo instantly in code
+if ".streamlit.app.com" in REDIRECT_URI:
+    REDIRECT_URI = REDIRECT_URI.replace(".streamlit.app.com", ".streamlit.app")
+
+# Developer Safety Check: Stop execution and alert if CLIENT_ID is missing
+if not CLIENT_ID or CLIENT_ID.strip() == "":
+    st.error("⚠️ **Configuration Error**: `client_id` is missing from Streamlit Secrets. Please check your secrets configuration.")
+    st.stop()
+
+# Clean initialization with exact required parameters
 oauth2 = OAuth2Component(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -263,4 +285,3 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-        
