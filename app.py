@@ -1,5 +1,5 @@
 # ============================================================================
-# app.py - FIXED ENTERPRISE FRONTEND
+# app.py - GOOGLE-ONLY ENTERPRISE FRONTEND
 # ============================================================================
 
 import os
@@ -22,13 +22,6 @@ st.markdown("""
         color: #f1f5f9;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    div[data-testid="stForm"] {
-        background: rgba(15, 23, 42, 0.85);
-        backdrop-filter: blur(16px);
-        border: 1px solid rgba(59, 130, 246, 0.4);
-        border-radius: 16px;
-        padding: 2.5rem;
-    }
     div.stButton > button:first-child {
         background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
         color: white;
@@ -43,21 +36,6 @@ st.markdown("""
         border-radius: 8px !important;
         border: 1px solid #1e293b !important;
     }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: rgba(15, 23, 42, 0.5);
-        padding: 6px;
-        border-radius: 10px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 6px;
-        color: #94a3b8;
-        font-weight: 500;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #1e293b !important;
-        color: #ffffff !important;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -69,10 +47,9 @@ web_secrets = st.secrets.get("web", st.secrets.get("google_oauth", {}))
 CLIENT_ID = web_secrets.get("client_id", "")
 CLIENT_SECRET = web_secrets.get("client_secret", "")
 
-# LALAMISHA REDIRECT URI ISIWE NA .com YA UONGO (Hapa ndipo mismatch ilikuwa inatokea)
-REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
+# Exact match redirect URI matching Google Cloud Console
+REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"com
 
-# Clean initialization of OAuth2Component
 oauth2 = OAuth2Component(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -91,7 +68,7 @@ def get_auth_headers():
     return {}
 
 # ============================================================================
-# AUTHENTICATION PORTAL
+# AUTHENTICATION PORTAL (GOOGLE ONLY)
 # ============================================================================
 if not st.session_state.access_token:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -108,80 +85,46 @@ if not st.session_state.access_token:
             unsafe_allow_html=True
         )
 
-        auth_tab1, auth_tab2 = st.tabs(["🔒 Work Email Login", "🌐 Google Account Login"])
-
-        # TAB 1: WORK EMAIL
-        with auth_tab1:
-            with st.form("work_email_form"):
-                work_email = st.text_input("Work Email Address", placeholder="name@company.com", value="")
-                work_password = st.text_input("Password", type="password", placeholder="••••••••••••", value="")
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                submit_work = st.form_submit_button("Sign In with Work Email", use_container_width=True, type="primary")
-
-                if submit_work:
-                    if not work_email or not work_password:
-                        st.error("Please enter both your work email and password.")
-                    else:
-                        with st.spinner("Authenticating secure enterprise session..."):
-                            try:
-                                res = requests.post(
-                                    f"{BACKEND_URL}/api/v1/auth/login",
-                                    json={"email": work_email, "password": work_password},
-                                    timeout=30
-                                )
-                                if res.status_code == 200:
-                                    data = res.json()
-                                    st.session_state.access_token = data.get("access_token")
-                                    st.session_state.user_info = data
-                                    st.success("Authenticated successfully! Loading workspace...")
-                                    st.rerun()
-                                else:
-                                    st.error(f"Login failed ({res.status_code}): {res.text}")
-                            except Exception as e:
-                                st.error(f"Connection error: {str(e)}")
-
-        # TAB 2: GOOGLE ACCOUNT
-        with auth_tab2:
-            st.markdown(
-                """
-                <div style="text-align: center; margin-bottom: 1.5rem;">
-                    <p style="color: #94a3b8; font-size: 0.95rem;">Authenticate securely using your official Google account.</p>
-                </div>
-                """, 
-                unsafe_allow_html=True
+        st.markdown(
+            """
+            <div style="text-align: center; margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.85); padding: 2rem; border-radius: 16px; border: 1px solid rgba(59, 130, 246, 0.4);">
+                <p style="color: #94a3b8; font-size: 1rem; margin-bottom: 1.5rem;">Authenticate securely using your official Google account.</p>
+            """, 
+            unsafe_allow_html=True
+        )
+        
+        try:
+            result = oauth2.authorize_button(
+                name="Sign in with Google",
+                icon="https://www.google.com/favicon.ico",
+                redirect_uri=REDIRECT_URI,
+                scope="openid email profile",
+                key="google_sso_btn",
             )
             
-            try:
-                result = oauth2.authorize_button(
-                    name="Sign in with Google",
-                    icon="https://www.google.com/favicon.ico",
-                    redirect_uri=REDIRECT_URI,
-                    scope="openid email profile",
-                    key="google_sso_btn",
-                )
+            if result and isinstance(result, dict) and "token" in result:
+                token_data = result["token"]
+                id_token_val = token_data.get("id_token")
                 
-                if result and isinstance(result, dict) and "token" in result:
-                    token_data = result["token"]
-                    id_token_val = token_data.get("id_token")
-                    
-                    if id_token_val:
-                        with st.spinner("Verifying Google secure token with backend..."):
-                            res = requests.post(
-                                f"{BACKEND_URL}/api/v1/auth/google",
-                                json={"id_token": id_token_val},
-                                timeout=30
-                            )
-                            if res.status_code == 200:
-                                data = res.json()
-                                st.session_state.access_token = data.get("access_token")
-                                st.session_state.user_info = data
-                                st.success("Google SSO Authenticated Successfully!")
-                                st.rerun()
-                            else:
-                                st.error(f"Authentication failed: {res.text}")
-            except Exception as oauth_err:
-                st.warning("Google login initialized.")
+                if id_token_val:
+                    with st.spinner("Verifying Google secure token with backend..."):
+                        res = requests.post(
+                            f"{BACKEND_URL}/api/v1/auth/google",
+                            json={"id_token": id_token_val},
+                            timeout=30
+                        )
+                        if res.status_code == 200:
+                            data = res.json()
+                            st.session_state.access_token = data.get("access_token")
+                            st.session_state.user_info = data
+                            st.success("Google SSO Authenticated Successfully!")
+                            st.rerun()
+                        else:
+                            st.error(f"Authentication failed: {res.text}")
+        except Exception as oauth_err:
+            st.warning("Google login initialized.")
+            
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.stop()
 
@@ -223,4 +166,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-            
+        
