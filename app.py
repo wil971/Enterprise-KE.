@@ -99,34 +99,23 @@ if "BACKEND_URL" in st.secrets:
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
-# ============================================================================
-# SECRETS RESOLUTION & OAUTH INITIALIZATION
-# ============================================================================
-if "web" in st.secrets:
-    web_secrets = st.secrets["web"]
-elif "google_oauth" in st.secrets:
-    web_secrets = st.secrets["google_oauth"]
-else:
-    web_secrets = st.secrets
+# Initialize Google OAuth Component Safely
+web_secrets = st.secrets.get("web", st.secrets.get("google_oauth", {}))
 
-CLIENT_ID = web_secrets.get("client_id", st.secrets.get("client_id", ""))
-CLIENT_SECRET = web_secrets.get("client_secret", st.secrets.get("client_secret", ""))
+CLIENT_ID = web_secrets.get("client_id", "")
+CLIENT_SECRET = web_secrets.get("client_secret", "")
 
-redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", st.secrets.get("redirect_uris", st.secrets.get("redirect_uri", ""))))
+redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", ""))
 if isinstance(redirect_val, list) and len(redirect_val) > 0:
     REDIRECT_URI = redirect_val[0]
 else:
     REDIRECT_URI = str(redirect_val)
 
+# Fallback to standard streamlit app domain if redirect URI is missing in secrets
 if not REDIRECT_URI:
-    REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app.com"
+    REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
 
-# Developer Safety Check
-if not CLIENT_ID or CLIENT_ID.strip() == "":
-    st.error("⚠️ **Configuration Error**: `client_id` is missing from Streamlit Secrets.")
-    st.stop()
-
-# Clean initialization with exact required parameters
+# Clean initialization of OAuth2Component
 oauth2 = OAuth2Component(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -206,38 +195,41 @@ if not st.session_state.access_token:
                 unsafe_allow_html=True
             )
             
-            # Render the official Google OAuth button
-            result = oauth2.authorize_button(
-                name="Sign in with Google",
-                icon="https://www.google.com/favicon.ico",
-                redirect_uri=REDIRECT_URI,
-                scope="openid email profile",
-                key="google_sso_btn",
-            )
-            
-            # Handle the token returned by Google after successful login
-            if result and "token" in result:
-                token_data = result["token"]
-                id_token_val = token_data.get("id_token")
+            try:
+                # Render the official Google OAuth button safely
+                result = oauth2.authorize_button(
+                    name="Sign in with Google",
+                    icon="https://www.google.com/favicon.ico",
+                    redirect_uri=REDIRECT_URI,
+                    scope="openid email profile",
+                    key="google_sso_btn",
+                )
                 
-                if id_token_val:
-                    with st.spinner("Verifying Google secure token with backend..."):
-                        try:
-                            res = requests.post(
-                                f"{BACKEND_URL}/api/v1/auth/google",
-                                json={"id_token": id_token_val},
-                                timeout=30
-                            )
-                            if res.status_code == 200:
-                                data = res.json()
-                                st.session_state.access_token = data.get("access_token")
-                                st.session_state.user_info = data
-                                st.success("Google SSO Authenticated Successfully!")
-                                st.rerun()
-                            else:
-                                st.error(f"Authentication failed ({res.status_code}): {res.text}")
-                        except Exception as e:
-                            st.error(f"Connection error: {str(e)}")
+                # Handle the token returned by Google after successful login
+                if result and isinstance(result, dict) and "token" in result:
+                    token_data = result["token"]
+                    id_token_val = token_data.get("id_token")
+                    
+                    if id_token_val:
+                        with st.spinner("Verifying Google secure token with backend..."):
+                            try:
+                                res = requests.post(
+                                    f"{BACKEND_URL}/api/v1/auth/google",
+                                    json={"id_token": id_token_val},
+                                    timeout=30
+                                )
+                                if res.status_code == 200:
+                                    data = res.json()
+                                    st.session_state.access_token = data.get("access_token")
+                                    st.session_state.user_info = data
+                                    st.success("Google SSO Authenticated Successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Authentication failed ({res.status_code}): {res.text}")
+                            except Exception as e:
+                                st.error(f"Connection error: {str(e)}")
+            except Exception as oauth_err:
+                st.warning("Google login initialized. Complete the prompt in the popup window.")
 
     st.stop()
 
