@@ -48,7 +48,7 @@ CLIENT_ID = web_secrets.get("client_id", "")
 CLIENT_SECRET = web_secrets.get("client_secret", "")
 
 # Exact match redirect URI matching Google Cloud Console
-REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"com.
+REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
 
 oauth2 = OAuth2Component(
     CLIENT_ID,
