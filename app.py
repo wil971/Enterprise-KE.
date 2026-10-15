@@ -99,19 +99,34 @@ if "BACKEND_URL" in st.secrets:
 else:
     BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
 
-# Initialize Google OAuth Component Safely (Supports [web] or [google_oauth] blocks)
-web_secrets = st.secrets.get("web", st.secrets.get("google_oauth", {}))
+# ============================================================================
+# SECRETS RESOLUTION & OAUTH INITIALIZATION
+# ============================================================================
+if "web" in st.secrets:
+    web_secrets = st.secrets["web"]
+elif "google_oauth" in st.secrets:
+    web_secrets = st.secrets["google_oauth"]
+else:
+    web_secrets = st.secrets
 
-CLIENT_ID = web_secrets.get("client_id", "")
-CLIENT_SECRET = web_secrets.get("client_secret", "")
+CLIENT_ID = web_secrets.get("client_id", st.secrets.get("client_id", ""))
+CLIENT_SECRET = web_secrets.get("client_secret", st.secrets.get("client_secret", ""))
 
-redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", ""))
+redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", st.secrets.get("redirect_uris", st.secrets.get("redirect_uri", ""))))
 if isinstance(redirect_val, list) and len(redirect_val) > 0:
     REDIRECT_URI = redirect_val[0]
 else:
     REDIRECT_URI = str(redirect_val)
 
-# Clean initialization with exact required parameters to prevent MissingRevokeTokenAuthMethodError
+if not REDIRECT_URI:
+    REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app.com"
+
+# Developer Safety Check
+if not CLIENT_ID or CLIENT_ID.strip() == "":
+    st.error("⚠️ **Configuration Error**: `client_id` is missing from Streamlit Secrets.")
+    st.stop()
+
+# Clean initialization with exact required parameters
 oauth2 = OAuth2Component(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -264,4 +279,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error("Search request failed.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-                            
+            
