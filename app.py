@@ -1,5 +1,5 @@
 # ============================================================================
-# app.py - ENTERPRISE CLIENT-READY FRONTEND
+# app.py - FIXED ENTERPRISE FRONTEND
 # ============================================================================
 
 import os
@@ -14,34 +14,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Glean-Style Modern SaaS Aesthetic with Live Animations & Glowing Borders
+# Glean-Style Modern SaaS Aesthetic
 st.markdown("""
     <style>
-    /* Deep Immersive Enterprise Background */
     .stApp { 
         background: radial-gradient(circle at 50% 0%, #111827 0%, #06090f 100%);
         color: #f1f5f9;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-
-    /* Moving Gradient Border / Ambient Glow Animation */
-    @keyframes borderGlow {
-        0% { border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 0 25px rgba(59, 130, 246, 0.1); }
-        50% { border-color: rgba(129, 140, 248, 0.8); box-shadow: 0 0 40px rgba(99, 102, 241, 0.25); }
-        100% { border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 0 25px rgba(59, 130, 246, 0.1); }
-    }
-
-    /* Main Authentication Form Container */
     div[data-testid="stForm"] {
         background: rgba(15, 23, 42, 0.85);
         backdrop-filter: blur(16px);
         border: 1px solid rgba(59, 130, 246, 0.4);
         border-radius: 16px;
         padding: 2.5rem;
-        animation: borderGlow 6s infinite ease-in-out;
     }
-
-    /* High-End Primary Buttons with Smooth Hover Lift */
     div.stButton > button:first-child {
         background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
         color: white;
@@ -49,32 +36,13 @@ st.markdown("""
         border-radius: 8px;
         height: 3rem;
         font-weight: 600;
-        letter-spacing: 0.025em;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
     }
-
-    div.stButton > button:first-child:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
-        filter: brightness(1.1);
-    }
-
-    /* Sleek Dark Mode Input Fields */
     input {
         background-color: #0b0f19 !important;
         color: #ffffff !important;
         border-radius: 8px !important;
         border: 1px solid #1e293b !important;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
-    
-    input:focus {
-        border-color: #3b82f6 !important;
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25) !important;
-    }
-
-    /* Tabs Styling */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
         background-color: rgba(15, 23, 42, 0.5);
@@ -94,26 +62,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Resolve Backend URL Safely
-if "BACKEND_URL" in st.secrets:
-    BACKEND_URL = st.secrets["BACKEND_URL"].rstrip("/")
-else:
-    BACKEND_URL = os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com").rstrip("/")
+BACKEND_URL = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com")).rstrip("/")
 
 # Initialize Google OAuth Component Safely
 web_secrets = st.secrets.get("web", st.secrets.get("google_oauth", {}))
-
 CLIENT_ID = web_secrets.get("client_id", "")
 CLIENT_SECRET = web_secrets.get("client_secret", "")
 
-redirect_val = web_secrets.get("redirect_uris", web_secrets.get("redirect_uri", ""))
-if isinstance(redirect_val, list) and len(redirect_val) > 0:
-    REDIRECT_URI = redirect_val[0]
-else:
-    REDIRECT_URI = str(redirect_val)
-
-# Fallback to standard streamlit app domain if redirect URI is missing in secrets
-if not REDIRECT_URI:
-    REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
+# LALAMISHA REDIRECT URI ISIWE NA .com YA UONGO (Hapa ndipo mismatch ilikuwa inatokea)
+REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
 
 # Clean initialization of OAuth2Component
 oauth2 = OAuth2Component(
@@ -134,7 +91,7 @@ def get_auth_headers():
     return {}
 
 # ============================================================================
-# AUTHENTICATION PORTAL (UNAUTHENTICATED)
+# AUTHENTICATION PORTAL
 # ============================================================================
 if not st.session_state.access_token:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -144,7 +101,7 @@ if not st.session_state.access_token:
         st.markdown(
             """
             <div style="text-align: center; margin-bottom: 2rem;">
-                <h1 style="font-size: 2.4rem; font-weight: 700; color: #ffffff; letter-spacing: -0.025em;">Enterprise Intelligence</h1>
+                <h1 style="font-size: 2.4rem; font-weight: 700; color: #ffffff;">Enterprise Intelligence</h1>
                 <p style="color: #94a3b8; font-size: 1.05rem;">Secure Knowledge Graph & Workspace Discovery</p>
             </div>
             """, 
@@ -184,7 +141,7 @@ if not st.session_state.access_token:
                             except Exception as e:
                                 st.error(f"Connection error: {str(e)}")
 
-        # TAB 2: GOOGLE ACCOUNT (True OIDC / SSO Redirect)
+        # TAB 2: GOOGLE ACCOUNT
         with auth_tab2:
             st.markdown(
                 """
@@ -196,7 +153,6 @@ if not st.session_state.access_token:
             )
             
             try:
-                # Render the official Google OAuth button safely
                 result = oauth2.authorize_button(
                     name="Sign in with Google",
                     icon="https://www.google.com/favicon.ico",
@@ -205,36 +161,32 @@ if not st.session_state.access_token:
                     key="google_sso_btn",
                 )
                 
-                # Handle the token returned by Google after successful login
                 if result and isinstance(result, dict) and "token" in result:
                     token_data = result["token"]
                     id_token_val = token_data.get("id_token")
                     
                     if id_token_val:
                         with st.spinner("Verifying Google secure token with backend..."):
-                            try:
-                                res = requests.post(
-                                    f"{BACKEND_URL}/api/v1/auth/google",
-                                    json={"id_token": id_token_val},
-                                    timeout=30
-                                )
-                                if res.status_code == 200:
-                                    data = res.json()
-                                    st.session_state.access_token = data.get("access_token")
-                                    st.session_state.user_info = data
-                                    st.success("Google SSO Authenticated Successfully!")
-                                    st.rerun()
-                                else:
-                                    st.error(f"Authentication failed ({res.status_code}): {res.text}")
-                            except Exception as e:
-                                st.error(f"Connection error: {str(e)}")
+                            res = requests.post(
+                                f"{BACKEND_URL}/api/v1/auth/google",
+                                json={"id_token": id_token_val},
+                                timeout=30
+                            )
+                            if res.status_code == 200:
+                                data = res.json()
+                                st.session_state.access_token = data.get("access_token")
+                                st.session_state.user_info = data
+                                st.success("Google SSO Authenticated Successfully!")
+                                st.rerun()
+                            else:
+                                st.error(f"Authentication failed: {res.text}")
             except Exception as oauth_err:
-                st.warning("Google login initialized. Complete the prompt in the popup window.")
+                st.warning("Google login initialized.")
 
     st.stop()
 
 # ============================================================================
-# MAIN APPLICATION DASHBOARD (AUTHENTICATED CLIENT VIEW)
+# MAIN APPLICATION DASHBOARD
 # ============================================================================
 with st.sidebar:
     st.title("🛡️ Enterprise Portal")
