@@ -84,7 +84,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+    )
 # ============================================================================
 # app.py - PART 2/4: ENUMS & DATA CONTRACT SCHEMAS
 # ============================================================================
@@ -219,7 +219,7 @@ class FastMCPToolCallResponse(BaseModel):
     tool_name: str
     result: Dict[str, Any]
     execution_time_ms: float
-    # ============================================================================
+        # ============================================================================
 # app.py - PART 3/4: BUSINESS LOGIC ENGINES & FASTMCP DISPATCHER
 # ============================================================================
 
@@ -353,8 +353,8 @@ class FastMCPToolDispatcher:
             "tool_name": tool_name,
             "result": result,
             "execution_time_ms": round(elapsed, 2)
-        }
-        # ============================================================================
+            }
+            # ============================================================================
 # app.py - PART 4/4: FASTAPI APPLICATION ROUTES & MIDDLEWARE
 # ============================================================================
 
