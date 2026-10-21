@@ -38,6 +38,5 @@ pandas
 pyvis
 nest_asyncio
 pypdf
-streamlit-oauth
 google-auth
 
