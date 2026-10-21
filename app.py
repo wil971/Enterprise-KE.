@@ -1,11 +1,10 @@
 # ============================================================================
-# app.py - GOOGLE-ONLY ENTERPRISE FRONTEND (Loop-Free Production)
+# app.py - GOOGLE IDENTITY SERVICES ENTERPRISE FRONTEND (Zero 401 Errors)
 # ============================================================================
 
-import os
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
-from streamlit_oauth import OAuth2Component
 
 st.set_page_config(
     page_title="Enterprise Intelligence Platform",
@@ -22,14 +21,6 @@ st.markdown("""
         color: #f1f5f9;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    div.stButton > button:first-child {
-        background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        height: 3rem;
-        font-weight: 600;
-    }
     input {
         background-color: #0b0f19 !important;
         color: #ffffff !important;
@@ -39,36 +30,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ----------------------------------------------------------------------------
-# 1. ENVIRONMENT & SECRET CONFIGURATION
-# ----------------------------------------------------------------------------
-BACKEND_URL = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com")).rstrip("/")
+# Configuration Constants
+BACKEND_URL = "https://enterprise-ke-3.onrender.com"
+CLIENT_ID = "29092714487-abig455o3s1b2vhkkiyv5o5343dqn82.apps.googleusercontent.com"
 
-# Safely extract Client ID and Client Secret from Streamlit Secrets
-CLIENT_ID = ""
-CLIENT_SECRET = ""
-
-if "web" in st.secrets:
-    CLIENT_ID = st.secrets["web"].get("client_id", "")
-    CLIENT_SECRET = st.secrets["web"].get("client_secret", "")
-elif "google_oauth" in st.secrets:
-    CLIENT_ID = st.secrets["google_oauth"].get("client_id", "")
-    CLIENT_SECRET = st.secrets["google_oauth"].get("client_secret", "")
-else:
-    CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID", "")
-    CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET", "")
-
-REDIRECT_URI = "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
-
-# Initialize OAuth Component
-oauth2 = OAuth2Component(
-    CLIENT_ID,
-    CLIENT_SECRET,
-    "https://accounts.google.com/o/oauth2/v2/auth",
-    "https://oauth2.googleapis.com/token"
-)
-
-# Initialize Session State Variables
+# Initialize Session State
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
 if "user_info" not in st.session_state:
@@ -80,10 +46,35 @@ def get_auth_headers():
     return {}
 
 # ----------------------------------------------------------------------------
-# 2. AUTHENTICATION PORTAL (GOOGLE ONLY - LOOP-FREE)
+# HANDLE GOOGLE TOKEN FROM URL CALLBACK
+# ----------------------------------------------------------------------------
+query_params = st.query_params
+id_token_val = query_params.get("id_token")
+
+if id_token_val and not st.session_state.access_token:
+    with st.spinner("Verifying secure token with enterprise backend..."):
+        try:
+            res = requests.post(
+                f"{BACKEND_URL}/api/v1/auth/google",
+                json={"id_token": id_token_val},
+                timeout=30
+            )
+            if res.status_code == 200:
+                data = res.json()
+                st.session_state.access_token = data.get("access_token")
+                st.session_state.user_info = data
+                st.query_params.clear()
+                st.rerun()
+            else:
+                st.error(f"Backend Authentication Failed: {res.text}")
+        except Exception as e:
+            st.error(f"Connection error to backend: {str(e)}")
+
+# ----------------------------------------------------------------------------
+# AUTHENTICATION PORTAL (OFFICIAL GOOGLE IDENTITY SERVICES BUTTON)
 # ----------------------------------------------------------------------------
 if not st.session_state.access_token:
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br><br>", unsafe_allow_html=True)
     _, col_center, _ = st.columns([1, 2, 1])
 
     with col_center:
@@ -99,66 +90,50 @@ if not st.session_state.access_token:
 
         st.markdown(
             """
-            <div style="text-align: center; margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.85); padding: 2rem; border-radius: 16px; border: 1px solid rgba(59, 130, 246, 0.4);">
+            <div style="text-align: center; margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.85); padding: 2.5rem; border-radius: 16px; border: 1px solid rgba(59, 130, 246, 0.4);">
                 <p style="color: #94a3b8; font-size: 1rem; margin-bottom: 1.5rem;">Authenticate securely using your official Google Workspace account.</p>
-            </div>
             """, 
             unsafe_allow_html=True
         )
         
-        try:
-            result = oauth2.authorize_button(
-                name="Sign in with Google",
-                icon="https://www.google.com/favicon.ico",
-                redirect_uri=REDIRECT_URI,
-                scope="openid email profile",
-                key="google_sso_btn",
-            )
-            
-            if result and isinstance(result, dict):
-                # Safely parse token dictionary structure returned by streamlit-oauth
-                token_dict = result.get("token", result)
-                id_token_val = token_dict.get("id_token")
-                
-                if not id_token_val and "id_token" in result:
-                    id_token_val = result.get("id_token")
-
-                if id_token_val:
-                    with st.spinner("Verifying Google secure token with enterprise backend..."):
-                        res = requests.post(
-                            f"{BACKEND_URL}/api/v1/auth/google",
-                            json={"id_token": id_token_val},
-                            timeout=30
-                        )
-                        
-                        if res.status_code == 200:
-                            data = res.json()
-                            # Save state to grant entry
-                            st.session_state.access_token = data.get("access_token")
-                            st.session_state.user_info = data
-                            
-                            # CRITICAL FIX: Clear the OAuth 'code' query parameters from URL bar to prevent infinite loop
-                            st.query_params.clear()
-                            st.rerun()
-                        else:
-                            st.error(f"Authentication failed ({res.status_code}): {res.text}")
-                else:
-                    st.error("Google response did not contain a valid ID Token.")
-
-        except Exception as oauth_err:
-            st.error(f"OAuth Handshake Error: {str(oauth_err)}")
+        # Official Google Identity Services HTML/JS snippet
+        gis_html = f"""
+        <div style="display: flex; justify-content: center; width: 100%;">
+            <script src="https://accounts.google.com/gsi/client" async defer></script>
+            <div id="g_id_onload"
+                 data-client_id="{CLIENT_ID}"
+                 data-callback="handleCredentialResponse"
+                 data-auto_prompt="false">
+            </div>
+            <div class="g_id_signin"
+                 data-type="standard"
+                 data-size="large"
+                 data-theme="filled_blue"
+                 data-text="sign_in_with"
+                 data-shape="rectangular"
+                 data-logo_alignment="left">
+            </div>
+            <script>
+                function handleCredentialResponse(response) {{
+                    const idToken = response.credential;
+                    const targetUrl = window.location.origin + window.location.pathname + "?id_token=" + encodeURIComponent(idToken);
+                    window.location.href = targetUrl;
+                }}
+            </script>
+        </div>
+        </div>
+        """
+        components.html(gis_html, height=100)
             
     st.stop()
 
 # ----------------------------------------------------------------------------
-# 3. MAIN APPLICATION DASHBOARD
+# MAIN APPLICATION DASHBOARD
 # ----------------------------------------------------------------------------
 with st.sidebar:
     st.title("🛡️ Enterprise Portal")
     user_info = st.session_state.user_info or {}
-    
-    st.write(f"**User ID:** `{user_info.get('user_id', 'N/A')}`")
-    st.write(f"**Tenant:** `{user_info.get('tenant_id', 'N/A')}`")
+    st.write(f"**Email:** `{user_info.get('email', 'N/A')}`")
     st.write(f"**Tier:** `{user_info.get('tier', 'PRO_ENTERPRISE')}`")
     
     st.markdown("---")
@@ -191,4 +166,4 @@ if st.button("Execute Intelligence Query", type="primary"):
                 st.error(f"Search request failed with status code {response.status_code}.")
         except Exception as e:
             st.error(f"Search error: {str(e)}")
-            
+        
