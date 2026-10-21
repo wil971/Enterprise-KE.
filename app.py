@@ -1,3 +1,4 @@
+
 # app.py — Enterprise Intelligence Platform Frontend
 
 import os
@@ -39,7 +40,7 @@ st.markdown(
 
     div[data-testid="stTextInput"] input {
         background-color: #0b0f19;
-        color: #ffffff;
+        color: white;
         border-radius: 8px;
         border: 1px solid #334155;
     }
@@ -50,6 +51,11 @@ st.markdown(
         padding: 1rem;
         border-radius: 12px;
     }
+
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -58,23 +64,44 @@ st.markdown(
 # ---------------------------------------------------------
 # 3. CONFIGURATION
 # ---------------------------------------------------------
+DEFAULT_BACKEND_URL = "https://enterprise-ke-3.onrender.com"
+
+
+def read_secret(key, default=None):
+    """Read a Streamlit secret safely."""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+# Prefer an explicitly configured URL, then environment variables.
+# The known Render URL prevents an absent secret from stopping startup.
+GOOGLE_CONFIG = read_secret("google_oauth", {})
+if not GOOGLE_CONFIG:
+    GOOGLE_CONFIG = read_secret("web", {})
+
+if not hasattr(GOOGLE_CONFIG, "get"):
+    GOOGLE_CONFIG = {}
+
 BACKEND_URL = str(
-    st.secrets.get(
-        "BACKEND_URL",
-        os.getenv("BACKEND_URL", ""),
-    )
+    read_secret("BACKEND_URL")
+    or os.getenv("BACKEND_URL")
+    or GOOGLE_CONFIG.get("BACKEND_URL")
+    or DEFAULT_BACKEND_URL
 ).strip().rstrip("/")
 
-try:
-    GOOGLE_CONFIG = st.secrets.get("google_oauth", {})
-    if not GOOGLE_CONFIG:
-        GOOGLE_CONFIG = st.secrets.get("web", {})
+CLIENT_ID = str(
+    GOOGLE_CONFIG.get("client_id")
+    or os.getenv("GOOGLE_CLIENT_ID")
+    or ""
+).strip()
 
-    CLIENT_ID = GOOGLE_CONFIG.get("client_id", "")
-    CLIENT_SECRET = GOOGLE_CONFIG.get("client_secret", "")
-except Exception:
-    CLIENT_ID = ""
-    CLIENT_SECRET = ""
+CLIENT_SECRET = str(
+    GOOGLE_CONFIG.get("client_secret")
+    or os.getenv("GOOGLE_CLIENT_SECRET")
+    or ""
+).strip()
 
 REDIRECT_URI = (
     "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app"
@@ -83,50 +110,82 @@ REDIRECT_URI = (
 # ---------------------------------------------------------
 # 4. SESSION STATE
 # ---------------------------------------------------------
-if "access_token" not in st.session_state:
-    st.session_state.access_token = None
+DEFAULT_STATE = {
+    "access_token": None,
+    "user_info": None,
+    "last_search": None,
+}
 
-if "user_info" not in st.session_state:
-    st.session_state.user_info = None
-
-if "last_search" not in st.session_state:
-    st.session_state.last_search = None
+for key, default in DEFAULT_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 
 def get_auth_headers():
-    """Return the application token issued by our backend."""
+    """Return the application's backend-issued JWT."""
     token = st.session_state.get("access_token")
-
     if not token:
         return {}
-
     return {"Authorization": f"Bearer {token}"}
 
 
 def backend_error_message(response):
-    """Extract a useful error from a backend response."""
+    """Extract a safe, readable message from an API response."""
     try:
         body = response.json()
-        detail = body.get("detail", body)
-        return str(detail)
-    except (ValueError, AttributeError):
-        return response.text[:500] or "No error details were returned."
+        if isinstance(body, dict):
+            detail = body.get("detail") or body.get("message")
+            if detail:
+                return str(detail)[:700]
+        elif isinstance(body, str):
+            return body[:700]
+    except (ValueError, TypeError):
+        pass
+
+    return response.text[:500] or "No error details were returned."
+
+
+def show_backend_failure(response, operation):
+    """Display actionable messages for common backend failures."""
+    if response.status_code == 503:
+        st.error(
+            f"{operation}: Render returned HTTP 503. "
+            "The backend service may be unavailable or failing "
+            "during startup. Check the Render service logs."
+        )
+    elif response.status_code == 502:
+        st.error(
+            f"{operation}: Render returned HTTP 502. "
+            "Check the backend service and its startup logs."
+        )
+    elif response.status_code >= 500:
+        st.error(
+            f"{operation}: backend error "
+            f"({response.status_code}). "
+            f"{backend_error_message(response)}"
+        )
+    else:
+        st.error(
+            f"{operation} failed ({response.status_code}): "
+            f"{backend_error_message(response)}"
+        )
 
 
 # ---------------------------------------------------------
-# 5. CHECK CONFIGURATION BEFORE STARTING OAUTH
+# 5. VALIDATE CONFIGURATION
 # ---------------------------------------------------------
-if not BACKEND_URL:
+if not BACKEND_URL.startswith("https://"):
     st.error(
-        "Backend URL is missing. Set BACKEND_URL in "
-        "Streamlit Secrets to your actual Render service URL."
+        "BACKEND_URL must be a valid HTTPS URL. "
+        "Check your Streamlit Secrets configuration."
     )
     st.stop()
 
 if not CLIENT_ID or not CLIENT_SECRET:
     st.error(
-        "Google OAuth credentials are missing. Check the "
-        "google_oauth section in Streamlit Secrets."
+        "Google OAuth credentials are missing. Configure "
+        "client_id and client_secret in the google_oauth "
+        "section of Streamlit Secrets."
     )
     st.stop()
 
@@ -148,7 +207,7 @@ if not st.session_state.access_token:
     with center:
         st.markdown(
             """
-            <div style="text-align:center; padding:1rem 0 2rem 0;">
+            <div style="text-align:center; padding:1rem 0 2rem;">
                 <h1 style="color:#ffffff;">
                     Enterprise Intelligence
                 </h1>
@@ -163,7 +222,7 @@ if not st.session_state.access_token:
         with st.container(border=True):
             st.subheader("Secure sign-in")
             st.write(
-                "Authenticate with Google to access the "
+                "Authenticate with Google to access your "
                 "Enterprise Intelligence workspace."
             )
 
@@ -176,60 +235,82 @@ if not st.session_state.access_token:
                     key="google_sso_btn",
                 )
 
-                if result and isinstance(result, dict):
+                if isinstance(result, dict) and result:
                     token_data = result.get("token", result)
 
-                    # The backend verifies Google ID tokens.
-                    # Never substitute an OAuth access token here.
-                    google_id_token = token_data.get("id_token")
-
-                    if not google_id_token:
+                    if not isinstance(token_data, dict):
                         st.error(
-                            "Google did not return an ID token. "
-                            "Check the OAuth configuration and scopes."
+                            "Google returned an unexpected token response."
                         )
                     else:
-                        with st.spinner(
-                            "Verifying your Google identity..."
-                        ):
-                            response = requests.post(
-                                f"{BACKEND_URL}/api/v1/auth/google",
-                                json={"id_token": google_id_token},
-                                timeout=30,
-                            )
+                        google_id_token = token_data.get("id_token")
 
-                        if response.status_code == 200:
-                            data = response.json()
-                            app_token = data.get("access_token")
-
-                            if not app_token:
-                                st.error(
-                                    "The backend response did not "
-                                    "contain an application access token."
-                                )
-                            else:
-                                st.session_state.access_token = app_token
-                                st.session_state.user_info = data
-                                st.session_state.last_search = None
-                                st.rerun()
-                        else:
+                        if not google_id_token:
                             st.error(
-                                "Google authentication was rejected "
-                                f"({response.status_code}): "
-                                f"{backend_error_message(response)}"
+                                "Google did not return an ID token. "
+                                "Confirm that the OAuth client, redirect "
+                                "URI, and OpenID scopes are configured "
+                                "correctly."
                             )
+                        else:
+                            with st.spinner(
+                                "Verifying your Google identity..."
+                            ):
+                                response = requests.post(
+                                    f"{BACKEND_URL}/api/v1/auth/google",
+                                    json={"id_token": google_id_token},
+                                    timeout=30,
+                                )
+
+                            if response.status_code == 200:
+                                try:
+                                    data = response.json()
+                                except ValueError:
+                                    st.error(
+                                        "The backend returned an invalid "
+                                        "JSON response during sign-in."
+                                    )
+                                    st.stop()
+
+                                app_token = data.get("access_token")
+
+                                if not app_token:
+                                    st.error(
+                                        "The backend did not return an "
+                                        "application access token."
+                                    )
+                                else:
+                                    st.session_state.access_token = app_token
+                                    st.session_state.user_info = data
+                                    st.session_state.last_search = None
+                                    st.rerun()
+                            else:
+                                show_backend_failure(
+                                    response,
+                                    "Google authentication",
+                                )
 
             except requests.Timeout:
                 st.error(
-                    "The backend took too long to respond. "
-                    "Check whether your Render service is awake."
+                    "The backend timed out during sign-in. "
+                    "Check whether the Render service is running."
                 )
-            except requests.RequestException as exc:
-                st.error(f"Could not reach the backend: {exc}")
-            except Exception as exc:
+            except requests.ConnectionError:
                 st.error(
-                    "Google sign-in encountered an error. "
-                    f"Details: {exc}"
+                    "Could not connect to the backend at "
+                    f"{BACKEND_URL}. Check the Render service status."
+                )
+            except requests.RequestException:
+                st.error(
+                    "A network error occurred while contacting "
+                    "the backend. Please retry."
+                )
+            except Exception as exc:
+                # Avoid displaying credentials or token data.
+                st.error(
+                    "The sign-in component encountered an error: "
+                    f"{type(exc).__name__}. Check the Streamlit logs "
+                    "for details."
                 )
 
     st.stop()
@@ -266,16 +347,22 @@ st.caption(
     "relevant enterprise context."
 )
 
-query = st.text_input(
-    "Knowledge search",
-    placeholder="Ask about a document, project, policy, or relationship...",
-)
+# ---------------------------------------------------------
+# 8. KNOWLEDGE SEARCH
+# ---------------------------------------------------------
+with st.form("enterprise_search_form"):
+    query = st.text_input(
+        "Knowledge search",
+        placeholder=(
+            "Ask about a document, project, policy, or relationship..."
+        ),
+    )
 
-search_clicked = st.button(
-    "Execute intelligence query",
-    type="primary",
-    use_container_width=False,
-)
+    search_clicked = st.form_submit_button(
+        "Execute intelligence query",
+        type="primary",
+        use_container_width=False,
+    )
 
 if search_clicked:
     if not query.strip():
@@ -295,37 +382,60 @@ if search_clicked:
                 )
 
             if response.status_code == 200:
-                st.session_state.last_search = response.json()
+                try:
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("Expected a JSON object")
+                    st.session_state.last_search = payload
+                except ValueError:
+                    st.error(
+                        "The search backend returned an invalid response."
+                    )
+
             elif response.status_code == 401:
-                st.error(
-                    "Your session was rejected. Sign out and sign in "
-                    "again. The backend token-validation code also "
-                    "needs to be checked."
+                st.session_state.access_token = None
+                st.session_state.user_info = None
+                st.session_state.last_search = None
+                st.warning(
+                    "Your session was rejected. Please sign in again."
                 )
+                st.rerun()
+
             elif response.status_code == 403:
                 st.error(
-                    "Your account does not have permission to access "
-                    "this resource."
+                    "Access denied. Your account may not have permission "
+                    "to search this workspace."
                 )
+
             else:
-                st.error(
-                    f"Search failed ({response.status_code}): "
-                    f"{backend_error_message(response)}"
-                )
+                show_backend_failure(response, "Search")
 
         except requests.Timeout:
-            st.error("Search timed out. Please try again.")
-        except requests.RequestException as exc:
-            st.error(f"Could not reach the search service: {exc}")
+            st.error(
+                "Search timed out. The backend may be slow or unavailable."
+            )
+        except requests.ConnectionError:
+            st.error(
+                "Could not connect to the search backend. "
+                "Check the Render service."
+            )
+        except requests.RequestException:
+            st.error(
+                "A network error occurred while executing the search."
+            )
 
 # ---------------------------------------------------------
-# 8. DISPLAY SEARCH RESPONSE
+# 9. DISPLAY SEARCH RESPONSE
 # ---------------------------------------------------------
 search_data = st.session_state.last_search
 
 if search_data:
     synthesis = search_data.get("ai_synthesis") or {}
-    summary = synthesis.get("summary")
+    summary = (
+        synthesis.get("summary")
+        if isinstance(synthesis, dict)
+        else None
+    )
 
     if summary:
         st.subheader("Intelligence summary")
@@ -333,16 +443,21 @@ if search_data:
 
     results = search_data.get("results") or []
 
+    if not isinstance(results, list):
+        results = []
+
     st.subheader(f"Search results ({len(results)})")
 
     if not results:
         st.write("No results were returned for this query.")
 
     for index, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+
         with st.container(border=True):
-            st.markdown(
-                f"**{index}. {item.get('title') or 'Untitled result'}**"
-            )
+            title = item.get("title") or "Untitled result"
+            st.markdown(f"**{index}. {title}**")
 
             snippet = item.get("snippet")
             if snippet:
@@ -350,5 +465,18 @@ if search_data:
             else:
                 st.caption("No preview was provided.")
 
-            # Evidence and citations will be added after the backend
-            # returns real document IDs and source metadata.
+            # Display source metadata when supplied by the backend.
+            source = item.get("source") or item.get("source_name")
+            if source:
+                st.caption(f"Source: {source}")
+
+            citation = item.get("citation") or item.get("document_id")
+            if citation:
+                st.caption(f"Evidence reference: {citation}")
+
+st.divider()
+st.caption(
+    "Enterprise Intelligence Platform · "
+    "Authenticated access to your configured backend"
+    )
+                                    
