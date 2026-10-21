@@ -448,46 +448,81 @@ async def login_with_work_email(
         tier=tier
     )
 
-@app.post("/api/v1/auth/google", response_model=TokenResponse, tags=["Authentication"])
-async def login_with_google(
-    request: GoogleAuthRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    Google Workspace OAuth Authentication.
-    Verifies Google ID Token and auto-provisions tenant isolation.
-    """
-    mock_google_email = "user@enterprise-corp.com"
-    domain = mock_google_email.split("@")[-1]
-    
-    mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
-    mock_user_id = f"usr_google_{abs(hash(mock_google_email))}"
-    tier = SubscriptionTier.PRO_ENTERPRISE
+@app.post(
+    "/api/v1/auth/google",
+    response_model=TokenResponse,
+    tags=["Authentication"],
+)
+async def login_with_google(request: GoogleAuthRequest):
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
 
-    token_data = {
-        "sub": mock_user_id,
-        "email": mock_google_email,
-        "tenant_id": mock_tenant_id,
-        "roles": ["employee"],
-        "tier": tier.value
-    }
-    
-    token = create_access_token(token_data)
+    if not client_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Google authentication is not configured",
+        )
 
-    background_tasks.add_task(
-        create_audit_log,
-        mock_tenant_id,
-        mock_user_id,
-        AuditAction.USER_LOGIN_GOOGLE,
-        "AUTH_SERVICE",
-        {"method": "google_oauth", "email": mock_google_email}
+    try:
+        claims = id_token.verify_oauth2_token(
+            request.id_token,
+            google_requests.Request(),
+            client_id,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired Google ID token",
+        )
+
+    if claims.get("iss") not in (
+        "accounts.google.com",
+        "https://accounts.google.com",
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Google token issuer",
+        )
+
+    if not claims.get("email_verified"):
+        raise HTTPException(
+            status_code=401,
+            detail="Google email is not verified",
+        )
+
+    email = claims.get("email")
+    google_sub = claims.get("sub")
+
+    if not email or not google_sub:
+        raise HTTPException(
+            status_code=401,
+            detail="Required Google identity claims are missing",
+        )
+
+    domain = email.rsplit("@", 1)[-1].lower()
+    tenant_id = f"tenant_{domain.replace('.', '_')}"
+    user_id = f"google_{google_sub}"
+    tier = SubscriptionTier.STANDARD
+
+    now = datetime.now(timezone.utc)
+    app_token = jwt.encode(
+        {
+            "sub": user_id,
+            "email": email,
+            "tenant_id": tenant_id,
+            "roles": ["employee"],
+            "tier": tier.value,
+            "iat": now,
+            "exp": now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        },
+        SECRET_KEY,
+        algorithm=ALGORITHM,
     )
 
     return TokenResponse(
-        access_token=token,
-        user_id=mock_user_id,
-        tenant_id=mock_tenant_id,
-        tier=tier
+        access_token=app_token,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        tier=tier,
     )
 
 # ----------------------------------------------------------------------------
