@@ -1,0 +1,42 @@
+
+# Dependencies
+node_modules/
+
+# Next.js build files
+.next/
+out/
+build/
+dist/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Certificates and private keys
+*.pem
+
+# Vercel
+.vercel/
+
+# Python backend and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# IDE files
+.vscode/
+.idea/
