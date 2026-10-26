@@ -1,5 +1,5 @@
 # ============================================================================
-# ENTERPRISE INTELLIGENCE PLATFORM - BACKEND ENGINE (RENDER DEPLOYMENT)
+# ENTERPRISE INTELLIGENCE PLATFORM - COMPLETE BACKEND ENGINE (RENDER DEPLOYMENT)
 # ============================================================================
 
 import os
@@ -389,19 +389,62 @@ async def google_login():
 async def google_callback(code: str = Query(...), bg: BackgroundTasks = None):
     redirect_uri = "https://enterprise-ke-3.onrender.com/api/v1/auth/google/callback"
     async with httpx.AsyncClient() as client:
-        resp = await client.post("https://oauth2.googleapis.com/token", data={"code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "redirect_uri": redirect_uri, "grant_type": "authorization_code"})
-        if resp.status_code != 200:
-            raise HTTPException(status_code=400, detail=f"Google exchange failed: {resp.text}")
-        token_data = resp.json()
-        user_info = jwt.decode(token_data.get("id_token"), options={"verify_signature": False})
-        email = user_info.get("email")
-        domain = email.split("@")[-1]
-        tenant_id = f"tenant_{domain.replace('.', '_')}"
-        user_id = str(abs(hash(email)))
-        token = create_access_token({"sub": user_id, "email": email, "tenant_id": tenant_id, "roles": ["admin", "employee"], "tier": "PRO_ENTERPRISE"})
-        if bg:
-            bg.add_task(create_audit_log, tenant_id, user_id, AuditAction.USER_LOGIN_GOOGLE, "AUTH", {"email": email})
-        return RedirectResponse(url=f"{FRONTEND_URL}/?token={token}&tenant={tenant_id}")
+        try:
+            token_resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+            if token_resp.status_code != 200:
+                logger.error(f"Google token exchange failed: {token_resp.text}")
+                raise HTTPException(status_code=400, detail=f"Google token exchange failed: {token_resp.text}")
+            
+            token_data = token_resp.json()
+            id_token_jwt = token_data.get("id_token")
+            if not id_token_jwt:
+                raise HTTPException(status_code=400, detail="Google response did not contain an id_token.")
+            
+            user_info = jwt.decode(id_token_jwt, options={"verify_signature": False})
+            email = user_info.get("email")
+            
+            if not email:
+                raise HTTPException(status_code=400, detail="Google account did not return a verified email.")
+
+            domain = email.split("@")[-1]
+            tenant_id = f"tenant_{domain.replace('.', '_')}"
+            user_id = str(abs(hash(email)))
+            tier = SubscriptionTier.PRO_ENTERPRISE
+
+            token_data_payload = {
+                "sub": user_id,
+                "email": email,
+                "tenant_id": tenant_id,
+                "roles": ["admin", "employee"],
+                "tier": tier.value,
+                "exp": datetime.utcnow() + timedelta(hours=24)
+            }
+            access_token = jwt.encode(token_data_payload, SECRET_KEY, algorithm=ALGORITHM)
+
+            if bg:
+                bg.add_task(
+                    create_audit_log,
+                    tenant_id,
+                    user_id,
+                    AuditAction.USER_LOGIN_GOOGLE,
+                    "AUTH_SERVICE",
+                    {"method": "google_oauth_backend_redirect", "email": email}
+                )
+
+            return RedirectResponse(url=f"{FRONTEND_URL}/?token={access_token}&tenant={tenant_id}")
+            
+        except Exception as e:
+            logger.error(f"OAuth Callback Exception: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Authentication processing error: {str(e)}")
 
 @app.post("/api/v1/search", response_model=SearchResponsePayload, tags=["Search Engine"])
 async def execute_search(query_req: SearchQueryRequest, bg: BackgroundTasks, user: UserContext = Depends(get_current_user)):
@@ -429,26 +472,7 @@ async def get_entity_workspace(entity_type: EntityType, entity_id: str, bg: Back
 @app.post("/api/v1/fastmcp/execute", response_model=FastMCPToolCallResponse, tags=["FastMCP Protocol"])
 async def execute_fastmcp(req: FastMCPToolCallRequest, bg: BackgroundTasks, user: UserContext = Depends(get_current_user)):
     res = await FastMCPToolDispatcher.execute_tool(req.tool_name, req.arguments, user)
-    bg.add_task(create_audit_log, user.tenant_id, user.user_id, AuditAction.FASTMCP_TOOL_CALL, f"TOOL_{req.tool_name}", req.arguments)
-    return res
-
-@app.post("/api/v1/webhooks/ingest", tags=["SaaS Connectors"])
-async def ingest_webhook(payload: WebhookPayload, req: Request, tenant_id: str = Header(..., alias="X-Tenant-ID"), db: AsyncSession = Depends(get_db_session)):
-    doc_id = f"doc_{payload.source_app.value}_{uuid.uuid4().hex[:8]}"
-    doc = DocumentModel(id=doc_id, tenant_id=tenant_id, title=f"[{payload.source_app.value.upper()}] {payload.title}", content=payload.content, acl_read_groups=payload.acl_groups)
-    db.add(doc)
-    await db.commit()
-    await create_audit_log(tenant_id, "SYSTEM_WEBHOOK", AuditAction.WEBHOOK_INGEST, doc_id, {"source": payload.source_app.value})
-    return {"status": "ingested", "document_id": doc_id}
-
-@app.get("/api/v1/admin/audit-logs/verify", tags=["Tenant Governance"])
-async def verify_audit_chain(user: UserContext = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
-    stmt = select(AuditLogModel).where(AuditLogModel.tenant_id == user.tenant_id).order_by(AuditLogModel.timestamp.desc()).limit(100)
-    res = await db.execute(stmt)
-    logs = res.scalars().all()
-    verified, tampered = 0, []
-    for log in logs:
-        expected = compute_audit_signature(log.id, log.tenant_id, log.user_id, log.action, log.timestamp.isoformat())
+    bg.add
    
                 # ============================================================================
 # app.py - PART 5/8: MULTI-HOP GRAPH TRAVERSAL & HYBRID RAG ENGINE
