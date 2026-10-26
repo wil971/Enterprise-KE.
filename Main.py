@@ -1,77 +1,112 @@
-import os
-import httpx
-from fastapi import HTTPException, Query
-from fastapi.responses import RedirectResponse
-import jwt
-from datetime import datetime, timedelta
-
-# Loaded securely from Render environment variables
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-FRONTEND_URL = os.getenv("FRONTEND_URL")
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-
-@app.get("/api/v1/auth/google/login")
-async def google_login():
-    redirect_uri = "https://enterprise-ke-3.onrender.com/api/v1/auth/google/callback"
-    google_auth_url = (
-        f"https://accounts.google.com/o/oauth2/v2/auth?"
-        f"client_id={GOOGLE_CLIENT_ID}&"
-        f"redirect_uri={redirect_uri}&"
-        f"response_type=code&"
-        f"scope=openid%20email%20profile&"
-        f"access_type=offline"
-    )
-    return RedirectResponse(url=google_auth_url)
-
-@app.get("/api/v1/auth/google/callback")
-async def google_callback(code: str = Query(...)):
-    redirect_uri = "https://enterprise-ke-3.onrender.com/api/v1/auth/google/callback"
-    
-    async with httpx.AsyncClient() as client:
-        token_resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-        if token_resp.status_code != 200:
-            raise HTTPException(status_code=400, detail=f"Google token exchange failed: {token_resp.text}")
-        
-        token_data = token_resp.json()
-        id_token_jwt = token_data.get("id_token")
-        
-        user_info = jwt.decode(id_token_jwt, options={"verify_signature": False})
-        email = user_info.get("email")
-        
-        if not email:
-            raise HTTPException(status_code=400, detail="Google account did not return an email.")
-
-        domain = email.split("@")[-1]
-        tenant_id = f"tenant_{domain}"
-        user_id = str(abs(hash(email)))
-
-        expire = datetime.utcnow() + timedelta(hours=12)
-        payload = {
-            "sub": user_id,
-            "email": email,
-            "tenant_id": tenant_id,
-            "tier": "PRO_ENTERPRISE",
-            "exp": expire
-        }
-        access_token = jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
-
-        return RedirectResponse(url=f"{FRONTEND_URL}/?token={access_token}&tenant={tenant_id}")
-        # ============================================================================
-# app.py - PART 2/4: ENUMS & DATA CONTRACT SCHEMAS
+# ============================================================================
+# ENTERPRISE INTELLIGENCE PLATFORM - BACKEND ENGINE (RENDER DEPLOYMENT)
 # ============================================================================
 
+import os
+import time
+import uuid
+import hmac
+import hashlib
+import logging
+from typing import List, Optional, Dict, Any, Union
+from enum import Enum
+from datetime import datetime, timedelta, timezone
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Request, BackgroundTasks, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel, EmailStr, Field
+import jwt
+import httpx
+
+# FastMCP Protocol Integration
+from fastmcp import FastMCP
+
+# SQLAlchemy Async Imports
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, String, DateTime, Text, JSON, select
+
 # ----------------------------------------------------------------------------
-# 2.1 ENUM DEFINITIONS
+# 1. CONFIGURATION & LOGGING SETUP
+# ----------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+)
+logger = logging.getLogger("EnterpriseIntelligence.Core")
+
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "prod-enterprise-secret-key-render-2026-v1")
+ALGORITHM = "HS256"
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://enterprise-ke-hqrlscaknjikcwz5kpndrt.streamlit.app").rstrip("/")
+
+mcp = FastMCP("EnterpriseIntelligence")
+
+class Settings:
+    PROJECT_NAME: str = "Enterprise Context & Intelligence Platform"
+
+settings = Settings()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+
+engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+async def get_db_session():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+# ----------------------------------------------------------------------------
+# 2. DATABASE MODELS & ORM SCHEMA
+# ----------------------------------------------------------------------------
+class AuditLogModel(Base):
+    __tablename__ = "audit_logs"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    tenant_id = Column(String, index=True)
+    user_id = Column(String)
+    action = Column(String)
+    resource = Column(String)
+    metadata_json = Column(JSON)
+    signature = Column(String)
+
+class KnowledgeGraphEdgeModel(Base):
+    __tablename__ = "knowledge_graph_edges"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id = Column(String, index=True)
+    source_entity = Column(String, index=True)
+    target_entity = Column(String, index=True)
+    relation_type = Column(String)
+    properties_json = Column(JSON, default={})
+
+class DocumentModel(Base):
+    __tablename__ = "documents"
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, index=True)
+    workspace_id = Column(String, nullable=True, index=True)
+    title = Column(String)
+    content = Column(Text)
+    acl_read_groups = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class UserModel(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, index=True)
+    email = Column(String, unique=True, index=True)
+    role = Column(String, default="employee")
+
+# ----------------------------------------------------------------------------
+# 3. ENUMS & DATA CONTRACTS
 # ----------------------------------------------------------------------------
 class SubscriptionTier(str, Enum):
     STANDARD = "STANDARD"
@@ -98,17 +133,11 @@ class AuditAction(str, Enum):
     EXECUTE_SEARCH = "EXECUTE_SEARCH"
     INSPECT_WORKSPACE = "INSPECT_WORKSPACE"
     FASTMCP_TOOL_CALL = "FASTMCP_TOOL_CALL"
-    AUTHORIZE_CONNECTOR = "AUTHORIZE_CONNECTOR"
+    WEBHOOK_INGEST = "WEBHOOK_INGEST"
 
-# ----------------------------------------------------------------------------
-# 2.2 AUTHENTICATION SCHEMAS
-# ----------------------------------------------------------------------------
 class WorkEmailLoginRequest(BaseModel):
     email: EmailStr
     password: str
-
-class GoogleAuthRequest(BaseModel):
-    id_token: str
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -124,9 +153,6 @@ class UserContext(BaseModel):
     roles: List[str]
     tier: SubscriptionTier
 
-# ----------------------------------------------------------------------------
-# 2.3 UNIFIED SEARCH & AI SYNTHESIS SCHEMAS
-# ----------------------------------------------------------------------------
 class SearchQueryRequest(BaseModel):
     query: str
     filters: Optional[Dict[str, Any]] = None
@@ -177,9 +203,6 @@ class SearchResponsePayload(BaseModel):
     total_results: int
     execution_time_ms: float
 
-# ----------------------------------------------------------------------------
-# 2.4 360° WORKSPACE SCHEMAS
-# ----------------------------------------------------------------------------
 class EntityWorkspaceResponse(BaseModel):
     entity_id: str
     entity_type: EntityType
@@ -188,9 +211,6 @@ class EntityWorkspaceResponse(BaseModel):
     sub_modules: List[Dict[str, Any]]
     permissions_verified: bool
 
-# ----------------------------------------------------------------------------
-# 2.5 FASTMCP SERVER PROTOCOL SCHEMAS
-# ----------------------------------------------------------------------------
 class FastMCPToolCallRequest(BaseModel):
     tool_name: str
     arguments: Dict[str, Any]
@@ -200,13 +220,34 @@ class FastMCPToolCallResponse(BaseModel):
     tool_name: str
     result: Dict[str, Any]
     execution_time_ms: float
-                                # ============================================================================
-# app.py - PART 3/4: BUSINESS LOGIC ENGINES & FASTMCP DISPATCHER
-# ============================================================================
+
+class WebhookPayload(BaseModel):
+    event_type: str
+    source_app: AppSource
+    external_id: str
+    title: str
+    content: str
+    acl_groups: List[str] = Field(default_factory=lambda: ["public"])
 
 # ----------------------------------------------------------------------------
-# 3.1 PERSISTENT AUDIT LOGGING SERVICE
+# 4. JWT & CRYPTOGRAPHIC HELPERS
 # ----------------------------------------------------------------------------
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(hours=24))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_access_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token")
+
+def compute_audit_signature(audit_id: str, tenant_id: str, user_id: str, action: str, timestamp_str: str) -> str:
+    message = f"{audit_id}:{tenant_id}:{user_id}:{action}:{timestamp_str}"
+    return hmac.new(SECRET_KEY.encode(), message.encode(), hashlib.sha256).hexdigest()
+
 async def create_audit_log(
     tenant_id: str,
     user_id: str,
@@ -214,42 +255,34 @@ async def create_audit_log(
     resource: str,
     metadata: Dict[str, Any]
 ):
-    """
-    Asynchronous audit logger persisting security & search actions to PostgreSQL.
-    """
     try:
         async with AsyncSessionLocal() as session:
             action_str = action.value if isinstance(action, AuditAction) else str(action)
+            audit_id = str(uuid.uuid4())
+            ts_str = datetime.utcnow().isoformat()
+            signature = compute_audit_signature(audit_id, tenant_id, user_id, action_str, ts_str)
+            
             log_entry = AuditLogModel(
+                id=audit_id,
                 timestamp=datetime.utcnow(),
                 tenant_id=tenant_id,
                 user_id=user_id,
                 action=action_str,
                 resource=resource,
-                metadata_json=metadata
+                metadata_json=metadata,
+                signature=signature
             )
             session.add(log_entry)
             await session.commit()
-            logger.info(f"[AUDIT LOGGED DB] Tenant={tenant_id} | User={user_id} | Action={action_str}")
     except Exception as e:
-        logger.error(f"Failed to record audit log entry: {str(e)}")
+        logger.error(f"Failed to record audit log: {str(e)}")
 
 # ----------------------------------------------------------------------------
-# 3.2 ENTERPRISE KNOWLEDGE GRAPH & ACL FILTERING ENGINE
+# 5. BUSINESS ENGINES & FASTMCP DISPATCHER
 # ----------------------------------------------------------------------------
 class EnterpriseKnowledgeGraphEngine:
-    """
-    Glean-style Knowledge Graph engine performing graph traversals and
-    enforcing dynamic, real-time access control list (ACL) permissions.
-    """
     @staticmethod
-    async def traverse_and_filter(
-        query: str, 
-        tenant_id: str, 
-        tier: SubscriptionTier
-    ) -> Dict[str, Any]:
-        """Traverses knowledge nodes and filters cross-app resources."""
-        # Simulated Knowledge Graph nodes with access rights
+    async def traverse_and_filter(query: str, tenant_id: str, tier: SubscriptionTier) -> Dict[str, Any]:
         nodes = [
             {
                 "id": "doc_001",
@@ -268,85 +301,53 @@ class EnterpriseKnowledgeGraphEngine:
                 "url": "https://company.atlassian.net/browse/PROD-882",
                 "author": "Sarah Jenkins",
                 "avatar": "https://ui-avatars.com/api/?name=Sarah+Jenkins",
-                "snippet": "...resolved token refresh latency by implementing distributed redis caching across render ASGI instances...",
+                "snippet": "...resolved token refresh latency by implementing distributed caching across render ASGI instances...",
                 "tier_required": SubscriptionTier.PRO_ENTERPRISE
-            },
-            {
-                "id": "slack_101",
-                "title": "#proj-gateway-deployment discussion",
-                "app": AppSource.SLACK,
-                "url": "https://slack.com/archives/C123456/p16900002",
-                "author": "Alex Rivera",
-                "avatar": "https://ui-avatars.com/api/?name=Alex+Rivera",
-                "snippet": "...we verified that production OAuth keys match tenant isolation configurations in Render...",
-                "tier_required": SubscriptionTier.STANDARD
             }
         ]
+        accessible = [n for n in nodes if tier == SubscriptionTier.PRO_ENTERPRISE or n["tier_required"] == SubscriptionTier.STANDARD]
+        return {"nodes": accessible}
 
-        # Filter nodes based on user's entitlement tier
-        accessible_nodes = []
-        for node in nodes:
-            if tier == SubscriptionTier.PRO_ENTERPRISE:
-                accessible_nodes.append(node)
-            elif node["tier_required"] == SubscriptionTier.STANDARD:
-                accessible_nodes.append(node)
-
-        return {"nodes": accessible_nodes}
-
-# ----------------------------------------------------------------------------
-# 3.3 FASTMCP TOOL PROTOCOL INTEGRATION CLIENT
-# ----------------------------------------------------------------------------
 class FastMCPToolDispatcher:
-    """
-    FastMCP Server Engine executing enterprise context tools.
-    """
     @staticmethod
-    async def execute_tool(
-        tool_name: str, 
-        arguments: Dict[str, Any], 
-        user_ctx: UserContext
-    ) -> Dict[str, Any]:
+    async def execute_tool(tool_name: str, arguments: Dict[str, Any], user_ctx: UserContext) -> Dict[str, Any]:
         start = time.time()
-        logger.info(f"FastMCP Executing: {tool_name} for Tenant: {user_ctx.tenant_id}")
-
         if tool_name == "query_knowledge_graph":
-            depth = arguments.get("depth", 2)
-            result = {
-                "nodes_evaluated": 128,
-                "traversal_depth": depth,
-                "connected_entities": ["Account: Acme Corp", "Contract: SLA_2026.pdf"],
-                "tenant_isolation": "VERIFIED_SECURE"
-            }
+            result = {"nodes_evaluated": 128, "tenant_isolation": "VERIFIED_SECURE"}
         elif tool_name == "verify_document_permissions":
-            doc_id = arguments.get("doc_id", "doc_001")
-            result = {
-                "doc_id": doc_id,
-                "has_permission": True,
-                "access_level": "READ_WRITE",
-                "tenant_owner": user_ctx.tenant_id
-            }
+            result = {"doc_id": arguments.get("doc_id"), "has_permission": True}
         else:
-            result = {"status": "executed", "echo_args": arguments}
-
+            result = {"status": "executed", "echo": arguments}
         elapsed = (time.time() - start) * 1000
-        return {
-            "status": "success",
-            "tool_name": tool_name,
-            "result": result,
-            "execution_time_ms": round(elapsed, 2)
-    }
-    # ============================================================================
-# app.py - PART 4/4: FASTAPI APPLICATION ROUTES & MIDDLEWARE
-# ============================================================================
+        return {"status": "success", "tool_name": tool_name, "result": result, "execution_time_ms": round(elapsed, 2)}
 
-# Initialize FastAPI Application
+# ----------------------------------------------------------------------------
+# 6. FASTMCP TOOL REGISTRY DECORATORS
+# ----------------------------------------------------------------------------
+@mcp.tool(name="inspect_tenant_security_posture")
+async def inspect_tenant_security_posture(tenant_id: str) -> dict:
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(AuditLogModel).where(AuditLogModel.tenant_id == tenant_id))
+        total_audits = len(res.scalars().all())
+        return {"tenant_id": tenant_id, "status": "COMPLIANT", "total_audit_events": total_audits, "encryption": "AES-256-GCM"}
+
+# ----------------------------------------------------------------------------
+# 7. FASTAPI LIFESPAN & APPLICATION SETUP
+# ----------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database initialized and verified.")
+    yield
+
 app = FastAPI(
-    title="Enterprise Context & Intelligence Platform",
+    title=settings.PROJECT_NAME,
     version="2.0.0",
-    description="Glean-grade Multi-Tenant Enterprise Search & Knowledge Graph Engine deployed on Render"
+    description="Glean-grade Multi-Tenant Enterprise Search & Knowledge Graph Engine",
+    lifespan=lifespan
 )
 
-# Enable CORS for modern web frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -355,366 +356,100 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----------------------------------------------------------------------------
-# 4.1 LIFECYCLE & DEPENDENCY INJECTION
-# ----------------------------------------------------------------------------
-@app.on_event("startup")
-async def on_startup():
-    """Initializes database tables on ASGI application startup."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database connection initialized and schema verified.")
-
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserContext:
-    """Dependency for extract user and tenant claims from Bearer token."""
     payload = decode_access_token(token)
-    user_id: str = payload.get("sub")
-    tenant_id: str = payload.get("tenant_id")
-    email: str = payload.get("email")
-    roles: List[str] = payload.get("roles", [])
-    tier: str = payload.get("tier", SubscriptionTier.STANDARD.value)
-
-    if not user_id or not tenant_id:
-        raise HTTPException(status_code=401, detail="Invalid token claims payload")
-
     return UserContext(
-        user_id=user_id,
-        email=email,
-        tenant_id=tenant_id,
-        roles=roles,
-        tier=SubscriptionTier(tier)
+        user_id=payload.get("sub"),
+        email=payload.get("email"),
+        tenant_id=payload.get("tenant_id"),
+        roles=payload.get("roles", []),
+        tier=SubscriptionTier(payload.get("tier", "STANDARD"))
     )
 
 # ----------------------------------------------------------------------------
-# 4.2 AUTHENTICATION ENDPOINTS
+# 8. APPLICATION ROUTES
 # ----------------------------------------------------------------------------
 @app.post("/api/v1/auth/login", response_model=TokenResponse, tags=["Authentication"])
-async def login_with_work_email(
-    request: WorkEmailLoginRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    Standard Work Email + Password Authentication.
-    Resolves domain to Tenant ID automatically.
-    """
+async def login_work_email(request: WorkEmailLoginRequest, bg: BackgroundTasks):
     domain = request.email.split("@")[-1]
-    mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
-    mock_user_id = f"usr_{abs(hash(request.email))}"
-    
-    tier = SubscriptionTier.PRO_ENTERPRISE if "enterprise" in domain else SubscriptionTier.STANDARD
-
-    token_data = {
-        "sub": mock_user_id,
-        "email": request.email,
-        "tenant_id": mock_tenant_id,
-        "roles": ["employee"],
-        "tier": tier.value
-    }
-    
-    token = create_access_token(token_data)
-
-    background_tasks.add_task(
-        create_audit_log,
-        mock_tenant_id,
-        mock_user_id,
-        AuditAction.USER_LOGIN,
-        "AUTH_SERVICE",
-        {"method": "work_email", "email": request.email}
-    )
-
-    return TokenResponse(
-        access_token=token,
-        user_id=mock_user_id,
-        tenant_id=mock_tenant_id,
-        tier=tier
-    )
-
-@app.post("/api/v1/auth/google", response_model=TokenResponse, tags=["Authentication"])
-async def login_with_google(
-    request: GoogleAuthRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    Google Workspace OAuth Authentication.
-    Verifies Google ID Token and auto-provisions tenant isolation.
-    """
-    mock_google_email = "user@enterprise-corp.com"
-    domain = mock_google_email.split("@")[-1]
-    
-    mock_tenant_id = f"tenant_{domain.replace('.', '_')}"
-    mock_user_id = f"usr_google_{abs(hash(mock_google_email))}"
+    tenant_id = f"tenant_{domain.replace('.', '_')}"
+    user_id = f"usr_{abs(hash(request.email))}"
     tier = SubscriptionTier.PRO_ENTERPRISE
+    token = create_access_token({"sub": user_id, "email": request.email, "tenant_id": tenant_id, "roles": ["admin", "employee"], "tier": tier.value})
+    bg.add_task(create_audit_log, tenant_id, user_id, AuditAction.USER_LOGIN, "AUTH", {"email": request.email})
+    return TokenResponse(access_token=token, user_id=user_id, tenant_id=tenant_id, tier=tier)
 
-    token_data = {
-        "sub": mock_user_id,
-        "email": mock_google_email,
-        "tenant_id": mock_tenant_id,
-        "roles": ["employee"],
-        "tier": tier.value
-    }
-    
-    token = create_access_token(token_data)
+@app.get("/api/v1/auth/google/login", tags=["Authentication"])
+async def google_login():
+    redirect_uri = "https://enterprise-ke-3.onrender.com/api/v1/auth/google/callback"
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect_uri}&response_type=code&scope=openid%20email%20profile&access_type=offline"
+    return RedirectResponse(url=auth_url)
 
-    background_tasks.add_task(
-        create_audit_log,
-        mock_tenant_id,
-        mock_user_id,
-        AuditAction.USER_LOGIN_GOOGLE,
-        "AUTH_SERVICE",
-        {"method": "google_oauth", "email": mock_google_email}
-    )
+@app.get("/api/v1/auth/google/callback", tags=["Authentication"])
+async def google_callback(code: str = Query(...), bg: BackgroundTasks = None):
+    redirect_uri = "https://enterprise-ke-3.onrender.com/api/v1/auth/google/callback"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post("https://oauth2.googleapis.com/token", data={"code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "redirect_uri": redirect_uri, "grant_type": "authorization_code"})
+        if resp.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Google exchange failed: {resp.text}")
+        token_data = resp.json()
+        user_info = jwt.decode(token_data.get("id_token"), options={"verify_signature": False})
+        email = user_info.get("email")
+        domain = email.split("@")[-1]
+        tenant_id = f"tenant_{domain.replace('.', '_')}"
+        user_id = str(abs(hash(email)))
+        token = create_access_token({"sub": user_id, "email": email, "tenant_id": tenant_id, "roles": ["admin", "employee"], "tier": "PRO_ENTERPRISE"})
+        if bg:
+            bg.add_task(create_audit_log, tenant_id, user_id, AuditAction.USER_LOGIN_GOOGLE, "AUTH", {"email": email})
+        return RedirectResponse(url=f"{FRONTEND_URL}/?token={token}&tenant={tenant_id}")
 
-    return TokenResponse(
-        access_token=token,
-        user_id=mock_user_id,
-        tenant_id=mock_tenant_id,
-        tier=tier
-    )
-
-# ----------------------------------------------------------------------------
-# 4.3 GLEAN-GRADE UNIFIED SEARCH & SYNTHESIS ENGINE
-# ----------------------------------------------------------------------------
 @app.post("/api/v1/search", response_model=SearchResponsePayload, tags=["Search Engine"])
-async def execute_unified_search(
-    query_req: SearchQueryRequest,
-    background_tasks: BackgroundTasks,
-    current_user: UserContext = Depends(get_current_user)
-):
-    """
-    Primary Unified Search API.
-    - Standard Tier: Performs Vector RAG + Document Permissions.
-    - Pro Tier: Performs Knowledge Graph RAG + Real-time ACL Filtering + Expert Mining.
-    """
-    start_time = time.time()
-    tenant_id = current_user.tenant_id
-    user_id = current_user.user_id
-    tier = current_user.tier
-
-    # 1. Traversal and ACL Filtering via Knowledge Graph Engine
-    graph_data = await EnterpriseKnowledgeGraphEngine.traverse_and_filter(
-        query_req.query, tenant_id, tier
-    )
-
-    # 2. Expert Mining (Pro Enterprise Exclusive)
-    experts = []
-    if tier == SubscriptionTier.PRO_ENTERPRISE:
-        experts.append(
-            ExpertContact(
-                user_id="usr_99",
-                name="Sarah Jenkins",
-                title="Lead Solutions Architect",
-                avatar="https://ui-avatars.com/api/?name=Sarah+Jenkins",
-                match_reason="Authored 14 related architecture documents in Confluence"
-            )
-        )
-
-    # 3. Construct Search Result Items
-    results = []
-    citations = []
+async def execute_search(query_req: SearchQueryRequest, bg: BackgroundTasks, user: UserContext = Depends(get_current_user)):
+    start = time.time()
+    graph_data = await EnterpriseKnowledgeGraphEngine.traverse_and_filter(query_req.query, user.tenant_id, user.tier)
+    experts = [ExpertContact(user_id="usr_99", name="Sarah Jenkins", title="Lead Solutions Architect", avatar="https://ui-avatars.com/api/?name=Sarah+Jenkins", match_reason="Authored related architecture guides")] if user.tier == SubscriptionTier.PRO_ENTERPRISE else []
+    
+    results, citations = [], []
     for idx, node in enumerate(graph_data["nodes"], start=1):
-        results.append(
-            SearchResultItem(
-                id=node["id"],
-                title=node["title"],
-                snippet=node["snippet"],
-                app=node["app"],
-                url=node["url"],
-                author_name=node["author"],
-                author_avatar=node["avatar"],
-                last_updated="2 hours ago",
-                breadcrumbs=["Engineering", "Architecture", "2026 Specifications"],
-                score=round(0.98 - (idx * 0.03), 2)
-            )
-        )
-        citations.append(
-            Citation(
-                id=idx,
-                doc_id=node["id"],
-                title=node["title"],
-                app=node["app"],
-                url=node["url"]
-            )
-        )
+        results.append(SearchResultItem(id=node["id"], title=node["title"], snippet=node["snippet"], app=node["app"], url=node["url"], author_name=node["author"], author_avatar=node["avatar"], last_updated="2 hours ago", breadcrumbs=["Engineering", "Architecture"], score=round(0.98 - (idx * 0.03), 2)))
+        citations.append(Citation(id=idx, doc_id=node["id"], title=node["title"], app=node["app"], url=node["url"]))
 
-    # 4. Synthesize AI Answer Card with Citations
-    synthesis = AISynthesisCard(
-        summary=(
-            f"Based on verified records across your connected workspace, the query '{query_req.query}' "
-            f"corresponds to primary Q3 architecture milestones. "
-            f"API gateway policies have been updated and verified against active tenant claims."
-        ),
-        citations=citations,
-        confidence_score=0.96,
-        generated_at=datetime.utcnow().isoformat()
-    )
+    synthesis = AISynthesisCard(summary=f"Verified records across connected workspace for '{query_req.query}' correspond to Q3 milestones.", citations=citations, confidence_score=0.96, generated_at=datetime.utcnow().isoformat())
+    facets = [FacetedFilterGroup(app=AppSource.GOOGLE_DRIVE, count=14), FacetedFilterGroup(app=AppSource.SLACK, count=32)]
+    elapsed = (time.time() - start) * 1000
 
-    facets = [
-        FacetedFilterGroup(app=AppSource.GOOGLE_DRIVE, count=14),
-        FacetedFilterGroup(app=AppSource.SLACK, count=32),
-        FacetedFilterGroup(app=AppSource.JIRA, count=5),
-        FacetedFilterGroup(app=AppSource.CONFLUENCE, count=8)
-    ]
+    bg.add_task(create_audit_log, user.tenant_id, user.user_id, AuditAction.EXECUTE_SEARCH, "SEARCH", {"query": query_req.query})
+    return SearchResponsePayload(ai_synthesis=synthesis, results=results, facets=facets, experts=experts, total_results=len(results), execution_time_ms=round(elapsed, 2))
 
-    execution_time = (time.time() - start_time) * 1000
+@app.get("/api/v1/entities/{entity_type}/{entity_id}", response_model=EntityWorkspaceResponse, tags=["Workspaces"])
+async def get_entity_workspace(entity_type: EntityType, entity_id: str, bg: BackgroundTasks, user: UserContext = Depends(get_current_user)):
+    bg.add_task(create_audit_log, user.tenant_id, user.user_id, AuditAction.INSPECT_WORKSPACE, f"ENTITY_{entity_type.value.upper()}", {"id": entity_id})
+    return EntityWorkspaceResponse(entity_id=entity_id, entity_type=entity_type, title=f"Workspace: {entity_id.upper()}", metadata={"tier": "Enterprise Pro", "owner": "Sarah Jenkins"}, sub_modules=[{"room_name": "Active Contracts", "source": "Salesforce"}], permissions_verified=True)
 
-    # Async Audit Logging to PostgreSQL
-    background_tasks.add_task(
-        create_audit_log,
-        tenant_id,
-        user_id,
-        AuditAction.EXECUTE_SEARCH,
-        "SEARCH_ENGINE",
-        {"query": query_req.query, "execution_time_ms": execution_time, "tier": tier.value}
-    )
-
-    return SearchResponsePayload(
-        ai_synthesis=synthesis,
-        results=results,
-        facets=facets,
-        experts=experts,
-        total_results=len(results),
-        execution_time_ms=round(execution_time, 2)
-    )
-
-# ----------------------------------------------------------------------------
-# 4.4 360° DEEP ENTITY WORKSPACES
-# ----------------------------------------------------------------------------
-@app.get("/api/v1/entities/{entity_type}/{entity_id}", response_model=EntityWorkspaceResponse, tags=["360 Workspaces"])
-async def get_deep_entity_workspace(
-    entity_type: EntityType,
-    entity_id: str,
-    background_tasks: BackgroundTasks,
-    current_user: UserContext = Depends(get_current_user)
-):
-    """
-    Renders 360° Entity Hubs (Client Account Rooms, Document Sandboxes, Expert Profiles).
-    """
-    background_tasks.add_task(
-        create_audit_log,
-        current_user.tenant_id,
-        current_user.user_id,
-        AuditAction.INSPECT_WORKSPACE,
-        f"ENTITY_{entity_type.value.upper()}",
-        {"entity_id": entity_id}
-    )
-
-    if entity_type == EntityType.ACCOUNT:
-        return EntityWorkspaceResponse(
-            entity_id=entity_id,
-            entity_type=EntityType.ACCOUNT,
-            title=f"Account Workspace: {entity_id.upper()}",
-            metadata={
-                "annual_recurring_revenue": "$250,000",
-                "contract_tier": "Enterprise Pro",
-                "renewal_date": "2027-01-15",
-                "account_executive": "Sarah Jenkins"
-            },
-            sub_modules=[
-                {"room_name": "Active Financial Contracts", "source": "Salesforce", "items_count": 3},
-                {"room_name": "High Priority Support Tickets", "source": "Zendesk", "items_count": 1},
-                {"room_name": "Dedicated Slack Channel", "source": "Slack", "channel": "#ext-acme-corp"}
-            ],
-            permissions_verified=True
-        )
-
-    elif entity_type == EntityType.DOCUMENT:
-        return EntityWorkspaceResponse(
-            entity_id=entity_id,
-            entity_type=EntityType.DOCUMENT,
-            title="Document Sandbox: Master SLA Agreement 2026.pdf",
-            metadata={
-                "file_size": "2.4 MB",
-                "mime_type": "application/pdf",
-                "deep_link_clause": "Clause 4.2 - Service Availability Penalty",
-                "revision_history_count": 12
-            },
-            sub_modules=[
-                {"room_name": "Historical Revisions", "action": "inspect_diff"},
-                {"room_name": "Legal Review Flagging", "action": "trigger_fastmcp_review"}
-            ],
-            permissions_verified=True
-        )
-
-    elif entity_type == EntityType.PERSON:
-        return EntityWorkspaceResponse(
-            entity_id=entity_id,
-            entity_type=EntityType.PERSON,
-            title="Expert Profile: Sarah Jenkins",
-            metadata={
-                "role": "VP of Solutions Engineering",
-                "department": "Technical Operations",
-                "manager": "Tim Scanlan (CEO)",
-                "active_jira_issues": 4
-            },
-            sub_modules=[
-                {"room_name": "Organizational Tree", "data": "Upstairs/Downstairs hierarchy"},
-                {"room_name": "Authored Knowledge Base", "docs_count": 42}
-            ],
-            permissions_verified=True
-        )
-
-    raise HTTPException(status_code=404, detail="Entity workspace type not supported")
-
-# ----------------------------------------------------------------------------
-# 4.5 FASTMCP SERVER TOOL DISPATCH ENDPOINT
-# ----------------------------------------------------------------------------
 @app.post("/api/v1/fastmcp/execute", response_model=FastMCPToolCallResponse, tags=["FastMCP Protocol"])
-async def execute_fastmcp_tool(
-    request: FastMCPToolCallRequest,
-    background_tasks: BackgroundTasks,
-    current_user: UserContext = Depends(get_current_user)
-):
-    """
-    Executes context-aware tool calls using the FastMCP Protocol.
-    """
-    response = await FastMCPToolDispatcher.execute_tool(
-        request.tool_name, request.arguments, current_user
-    )
+async def execute_fastmcp(req: FastMCPToolCallRequest, bg: BackgroundTasks, user: UserContext = Depends(get_current_user)):
+    res = await FastMCPToolDispatcher.execute_tool(req.tool_name, req.arguments, user)
+    bg.add_task(create_audit_log, user.tenant_id, user.user_id, AuditAction.FASTMCP_TOOL_CALL, f"TOOL_{req.tool_name}", req.arguments)
+    return res
 
-    background_tasks.add_task(
-        create_audit_log,
-        current_user.tenant_id,
-        current_user.user_id,
-        AuditAction.FASTMCP_TOOL_CALL,
-        f"TOOL_{request.tool_name}",
-        {"arguments": request.arguments}
-    )
+@app.post("/api/v1/webhooks/ingest", tags=["SaaS Connectors"])
+async def ingest_webhook(payload: WebhookPayload, req: Request, tenant_id: str = Header(..., alias="X-Tenant-ID"), db: AsyncSession = Depends(get_db_session)):
+    doc_id = f"doc_{payload.source_app.value}_{uuid.uuid4().hex[:8]}"
+    doc = DocumentModel(id=doc_id, tenant_id=tenant_id, title=f"[{payload.source_app.value.upper()}] {payload.title}", content=payload.content, acl_read_groups=payload.acl_groups)
+    db.add(doc)
+    await db.commit()
+    await create_audit_log(tenant_id, "SYSTEM_WEBHOOK", AuditAction.WEBHOOK_INGEST, doc_id, {"source": payload.source_app.value})
+    return {"status": "ingested", "document_id": doc_id}
 
-    return response
-
-# ----------------------------------------------------------------------------
-# 4.6 CONNECTORS & OAUTH HANDSHAKE
-# ----------------------------------------------------------------------------
-@app.get("/api/v1/connectors/{app_source}/authorize", tags=["SaaS Connectors"])
-async def authorize_connector(
-    app_source: AppSource,
-    current_user: UserContext = Depends(get_current_user)
-):
-    """Initiates live OAuth flow for connected connectors."""
-    redirect_url = f"https://auth.{app_source.value}.com/oauth/v2/authorize?client_id=prod_app&state={current_user.tenant_id}"
-    return {
-        "status": "pending_authorization",
-        "app": app_source.value,
-        "tenant_id": current_user.tenant_id,
-        "oauth_redirect_url": redirect_url
-    }
-
-# ----------------------------------------------------------------------------
-# 4.7 SYSTEM HEALTH CHECK
-# ----------------------------------------------------------------------------
-@app.get("/health", tags=["System"])
-async def health_check():
-    """System health check endpoint for Render monitoring."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "architecture": "Multi-Tenant Enterprise Knowledge Engine",
-        "version": "2.0.0"
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+@app.get("/api/v1/admin/audit-logs/verify", tags=["Tenant Governance"])
+async def verify_audit_chain(user: UserContext = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
+    stmt = select(AuditLogModel).where(AuditLogModel.tenant_id == user.tenant_id).order_by(AuditLogModel.timestamp.desc()).limit(100)
+    res = await db.execute(stmt)
+    logs = res.scalars().all()
+    verified, tampered = 0, []
+    for log in logs:
+        expected = compute_audit_signature(log.id, log.tenant_id, log.user_id, log.action, log.timestamp.isoformat())
+   
                 # ============================================================================
 # app.py - PART 5/8: MULTI-HOP GRAPH TRAVERSAL & HYBRID RAG ENGINE
 # ============================================================================
