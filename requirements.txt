@@ -27,3 +27,6 @@ nest_asyncio
 pypdf
 openai
 google-genai
+python-multipart>=0.0.9
+python-docx
+pwdlib[argon2]
