@@ -608,4 +608,319 @@ token_cipher = Fernet(FERNET_KEY)
 
 
 # ============================================================================
-            
+ # PART 5/10 — AUTH API, INVITATION-ONLY ONBOARDING AND DOCUMENT INGESTION
+# ============================================================================
+
+
+@app.post("/api/v1/auth/login", tags=["Authentication"])
+async def login_with_work_email(payload: LoginRequest, request: Request):
+    email = str(payload.email).lower()
+    async with AsyncSessionLocal() as session:
+        query = (
+            select(User)
+            .join(Tenant, Tenant.id == User.tenant_id)
+            .where(User.email == email, User.is_active.is_(True), Tenant.is_active.is_(True))
+        )
+        if payload.tenant_slug:
+            query = query.where(Tenant.slug == payload.tenant_slug.lower())
+        result = await session.execute(query.limit(3))
+        candidates = result.scalars().all()
+        if len(candidates) == 0:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        if len(candidates) > 1:
+            raise HTTPException(status_code=400, detail="This email belongs to multiple organizations; provide tenant_slug")
+        user = candidates[0]
+        if not user.password_hash or not password_hasher.verify(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        token = create_access_token(user)
+        user_id, tenant_id, role = user.id, user.tenant_id, user.role
+    await create_audit_log(
+        tenant_id, user_id, "USER_LOGIN", "AUTH_SERVICE",
+        {"method": "password"}, request.client.host if request.client else None,
+    )
+    return {
+        "access_token": token, "token_type": "bearer", "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "user": {"id": user_id, "email": email, "tenant_id": tenant_id, "role": role},
+    }
+
+
+@app.post("/api/v1/auth/google", tags=["Authentication"])
+async def login_with_google(payload: GoogleLoginRequest, request: Request):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured: set Client_Id in Render")
+    try:
+        identity = google_id_token.verify_oauth2_token(
+            payload.id_token, google_requests.Request(), GOOGLE_CLIENT_ID
+        )
+    except Exception as exc:
+        logger.warning("Google ID token verification failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=401, detail="Google identity token is invalid") from exc
+    email = str(identity.get("email", "")).lower()
+    subject = identity.get("sub")
+    if not email or not subject or not identity.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google account email is not verified")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).where(
+                or_(User.google_subject == subject, User.email == email),
+                User.is_active.is_(True),
+            ).limit(3)
+        )
+        candidates = result.scalars().all()
+        if not candidates:
+            raise HTTPException(status_code=403, detail="Your organization must invite you before you can sign in")
+        if len(candidates) > 1:
+            raise HTTPException(status_code=409, detail="This Google email is registered in more than one organization; ask the platform owner to link the correct account")
+        user = candidates[0]
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.id == user.tenant_id, Tenant.is_active.is_(True))
+        )
+        if not tenant_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Organization is inactive")
+        if user.google_subject and user.google_subject != subject:
+            raise HTTPException(status_code=403, detail="Google identity does not match the linked account")
+        if not user.google_subject:
+            user.google_subject = subject
+            user.email_verified = True
+            user.full_name = user.full_name or str(identity.get("name", ""))
+            await session.commit()
+        token = create_access_token(user)
+        user_id, tenant_id, role = user.id, user.tenant_id, user.role
+
+    await create_audit_log(
+        tenant_id, user_id, "USER_LOGIN_GOOGLE", "AUTH_SERVICE",
+        {"method": "google_id_token"}, request.client.host if request.client else None,
+    )
+    return {
+        "access_token": token, "token_type": "bearer", "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "user": {"id": user_id, "email": email, "tenant_id": tenant_id, "role": role},
+    }
+
+
+@app.post("/api/v1/organizations/invitations", tags=["Organization Management"])
+async def create_invitation(
+    payload: InviteRequest,
+    request: Request,
+    user: UserContext = Depends(require_roles("admin", "superadmin")),
+):
+    if payload.role == "admin" and user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Only a superadmin can invite another admin")
+    raw_token = secrets.token_urlsafe(36)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    async with AsyncSessionLocal() as session:
+        tenant_user = await session.execute(
+            select(User).where(User.tenant_id == user.tenant_id, User.email == str(payload.email).lower())
+        )
+        if tenant_user.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="A user with this email already exists in the organization")
+        invite = Invitation(
+            tenant_id=user.tenant_id, email=str(payload.email).lower(), role=payload.role,
+            token_hash=token_hash, invited_by=user.user_id,
+            expires_at=utc_now() + timedelta(days=7),
+        )
+        session.add(invite)
+        await session.commit()
+        invitation_id = invite.id
+    await create_audit_log(
+        user.tenant_id, user.user_id, "INVITATION_CREATED", invitation_id,
+        {"email": str(payload.email).lower(), "role": payload.role},
+        request.client.host if request.client else None,
+    )
+    # The token is returned once so the admin can deliver it through their
+    # trusted channel. The backend never sends invitations to an invented email.
+    return {"invitation_id": invitation_id, "invitation_token": raw_token, "expires_in_hours": 168}
+
+
+@app.post("/api/v1/auth/accept-invitation", tags=["Authentication"])
+async def accept_invitation(payload: AcceptInvitationRequest, request: Request):
+    if len(payload.password) < 12:
+        raise HTTPException(status_code=422, detail="Password must contain at least 12 characters")
+    token_hash = hashlib.sha256(payload.invitation_token.encode()).hexdigest()
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(Invitation).where(
+                    Invitation.token_hash == token_hash,
+                    Invitation.accepted_at.is_(None),
+                    Invitation.expires_at > utc_now(),
+                ).with_for_update()
+            )
+            invite = result.scalar_one_or_none()
+            if not invite:
+                raise HTTPException(status_code=400, detail="Invitation is invalid, expired or already used")
+            existing = await session.execute(
+                select(User.id).where(User.tenant_id == invite.tenant_id, User.email == invite.email)
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail="This account already exists")
+            user = User(
+                tenant_id=invite.tenant_id, email=invite.email,
+                full_name=payload.full_name.strip(),
+                password_hash=password_hasher.hash(payload.password),
+                role=invite.role, groups=[], is_active=True, email_verified=True,
+            )
+            session.add(user)
+            invite.accepted_at = utc_now()
+            await session.flush()
+            user_id, tenant_id = user.id, user.tenant_id
+            token = create_access_token(user)
+    await create_audit_log(tenant_id, user_id, "INVITATION_ACCEPTED", "USER", {"email": invite.email})
+    return {"access_token": token, "token_type": "bearer", "user_id": user_id, "tenant_id": tenant_id}
+
+
+@app.get("/api/v1/auth/me", tags=["Authentication"])
+async def current_user_profile(user: UserContext = Depends(get_current_user)):
+    return user.model_dump()
+
+
+@app.patch("/api/v1/organizations/users/{target_user_id}/groups", tags=["Organization Management"])
+async def update_user_groups(
+    target_user_id: str, payload: UpdateUserGroupsRequest, request: Request,
+    admin: UserContext = Depends(require_roles("admin", "superadmin")),
+):
+    normalized = sorted({group.strip().lower() for group in payload.groups if group.strip()})
+    if any(len(group) > 255 for group in normalized):
+        raise HTTPException(status_code=422, detail="Group names must be 255 characters or fewer")
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).where(User.id == target_user_id, User.tenant_id == admin.tenant_id)
+        )
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found in this organization")
+        if target.role == "superadmin" and admin.role != "superadmin":
+            raise HTTPException(status_code=403, detail="Only a superadmin can change a superadmin account")
+        target.groups = normalized
+        await session.commit()
+    await create_audit_log(
+        admin.tenant_id, admin.user_id, "USER_GROUPS_UPDATED", target_user_id,
+        {"groups": normalized}, request.client.host if request.client else None,
+    )
+    return {"user_id": target_user_id, "groups": normalized}
+
+
+def extract_file_text(filename: str, raw: bytes) -> str:
+    extension = os.path.splitext(filename.lower())[1]
+    if extension == ".pdf":
+        reader = PdfReader(io.BytesIO(raw))
+        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    if extension == ".docx":
+        document = WordDocument(io.BytesIO(raw))
+        paragraphs = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
+        table_text = [cell.text for table in document.tables for row in table.rows for cell in row.cells]
+        return "\n".join(paragraphs + table_text).strip()
+    if extension in {".txt", ".md", ".csv", ".json", ".html", ".xml"}:
+        return raw.decode("utf-8-sig", errors="replace").strip()
+    raise HTTPException(status_code=415, detail="Supported formats: PDF, DOCX, TXT, MD, CSV, JSON, HTML and XML")
+
+
+def can_read_document(document: DocumentRecord, user: UserContext) -> bool:
+    if user.user_id in (document.acl_user_ids or []):
+        return True
+    if user.email.lower() in [item.lower() for item in (document.acl_emails or [])]:
+        return True
+    allowed_groups = set(document.acl_groups or [])
+    user_groups = {str(group).lower() for group in (user.groups or [])}
+    allowed_emails = {str(email).lower() for email in (document.acl_emails or [])}
+    return (
+        "tenant:all" in allowed_groups
+        or bool(allowed_groups.intersection(user_groups))
+        or bool(allowed_emails.intersection(user_groups))
+    )
+
+
+@app.post("/api/v1/documents/upload", tags=["Knowledge Ingestion"])
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(default=None),
+    workspace_id: Optional[str] = Form(default=None),
+    visibility: Literal["private", "tenant"] = Form(default="private"),
+    user: UserContext = Depends(get_current_user),
+):
+    max_bytes = int(env_value("MAX_UPLOAD_BYTES", default=str(25 * 1024 * 1024)))
+    raw = await file.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"File exceeds {max_bytes // (1024 * 1024)} MB limit")
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    safe_filename = os.path.basename(file.filename or "uploaded-file")
+    content = extract_file_text(safe_filename, raw)
+    if not content:
+        raise HTTPException(status_code=422, detail="No searchable text could be extracted from this file")
+    content_hash = hashlib.sha256(raw).hexdigest()
+    document_id = new_id()
+    acl_groups = ["tenant:all"] if visibility == "tenant" and user.role in {"admin", "superadmin"} else []
+    if visibility == "tenant" and not acl_groups:
+        raise HTTPException(status_code=403, detail="Only organization admins can share a document with the whole tenant")
+    async with AsyncSessionLocal() as session:
+        duplicate_result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.tenant_id == user.tenant_id,
+                DocumentRecord.source_app == "upload",
+                DocumentRecord.content_hash == content_hash,
+            ).limit(1)
+        )
+        duplicate = duplicate_result.scalar_one_or_none()
+        if duplicate:
+            return {"status": "already_indexed", "document_id": duplicate.id, "content_hash": content_hash}
+        record = DocumentRecord(
+            id=document_id, tenant_id=user.tenant_id, workspace_id=workspace_id,
+            title=(title or safe_filename)[:500], filename=safe_filename,
+            content=content, content_hash=content_hash, source_app="upload",
+            acl_user_ids=[user.user_id], acl_emails=[], acl_groups=acl_groups,
+            uploaded_by=user.user_id, status="indexed",
+            metadata_json={"content_type": file.content_type, "size_bytes": len(raw)},
+        )
+        session.add(record)
+        await session.commit()
+    embedding_status = (
+        "indexed" if NVIDIA_API_KEY and ALLOW_EXTERNAL_AI_PROCESSING
+        else "disabled_by_policy" if NVIDIA_API_KEY and not ALLOW_EXTERNAL_AI_PROCESSING
+        else "not_configured"
+    )
+    if NVIDIA_API_KEY and ALLOW_EXTERNAL_AI_PROCESSING:
+        try:
+            await index_document_embeddings(user.tenant_id, document_id, content)
+        except Exception:
+            logger.exception("Embedding indexing failed for document %s", document_id)
+            embedding_status = "failed"
+    graph_status = "queued"
+    try:
+        await index_document_graph(user.tenant_id, document_id, record.title, content)
+        graph_status = "indexed"
+    except Exception:
+        logger.exception("Graph indexing failed for document %s", document_id)
+        graph_status = "failed"
+    await create_audit_log(
+        user.tenant_id, user.user_id, "DOCUMENT_UPLOADED", document_id,
+        {"filename": safe_filename, "size_bytes": len(raw), "graph_status": graph_status},
+        request.client.host if request.client else None,
+    )
+    return {"status": "indexed", "document_id": document_id, "embedding_status": embedding_status, "graph_status": graph_status}
+
+
+@app.get("/api/v1/documents/{document_id}", tags=["Knowledge Ingestion"])
+async def get_document(document_id: str, user: UserContext = Depends(get_current_user)):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.id == document_id,
+                DocumentRecord.tenant_id == user.tenant_id,
+            )
+        )
+        document = result.scalar_one_or_none()
+        if not document or not can_read_document(document, user):
+            raise HTTPException(status_code=404, detail="Document not found")
+        data = {
+            "id": document.id, "title": document.title, "filename": document.filename,
+            "source_app": document.source_app, "source_url": document.source_url,
+            "content": document.content, "created_at": document.created_at.isoformat(),
+        }
+    await create_audit_log(user.tenant_id, user.user_id, "DOCUMENT_READ", document_id)
+    return data
+
+
+# ============================================================================
+                            
