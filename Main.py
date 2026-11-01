@@ -360,3 +360,134 @@ class WebhookEvent(Base):
 
 
 # ============================================================================
+# PART 3/10 — REQUEST SCHEMAS, JWT SECURITY AND ACCESS CONTROL
+# ============================================================================
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=256)
+    tenant_slug: Optional[str] = Field(default=None, max_length=120)
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str = Field(min_length=20)
+
+
+class InviteRequest(BaseModel):
+    email: EmailStr
+    role: Literal["employee", "admin"] = "employee"
+
+
+class AcceptInvitationRequest(BaseModel):
+    invitation_token: str = Field(min_length=20)
+    full_name: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class UpdateUserGroupsRequest(BaseModel):
+    groups: list[str] = Field(default_factory=list, max_length=50)
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=1000)
+    page: int = Field(default=1, ge=1, le=1000)
+    page_size: int = Field(default=10, ge=1, le=50)
+    workspace_id: Optional[str] = None
+    source_app: Optional[str] = None
+
+
+class ReindexRequest(BaseModel):
+    after_id: Optional[str] = None
+    batch_size: int = Field(default=10, ge=1, le=25)
+
+
+class CreatePlanRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=80, pattern=r"^[a-z0-9_-]+$")
+    name: str = Field(min_length=2, max_length=160)
+    price_kes: float = Field(gt=0, le=10_000_000)
+    billing_days: int = Field(default=30, ge=1, le=3650)
+    seats: int = Field(default=5, ge=1, le=100000)
+
+
+class MpesaCheckoutRequest(BaseModel):
+    plan_code: str = Field(min_length=2, max_length=80)
+    phone_number: str = Field(min_length=9, max_length=16)
+
+
+class UserContext(BaseModel):
+    user_id: str
+    tenant_id: str
+    email: str
+    role: str
+    groups: list[str] = Field(default_factory=list)
+
+
+def create_access_token(user: User) -> str:
+    now = utc_now()
+    claims = {
+        "sub": user.id,
+        "tenant_id": user.tenant_id,
+        "email": user.email,
+        "role": user.role,
+        "groups": user.groups or [],
+        "iss": JWT_ISSUER,
+        "aud": [JWT_AUDIENCE, "enterprise-platform-mcp"],
+        "iat": now,
+        "nbf": now,
+        "exp": now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        "scope": "api:read api:write mcp:use",
+    }
+    return jwt.encode(claims, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict[str, Any]:
+    try:
+        return jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+            options={"require": ["exp", "iat", "sub", "tenant_id", "iss", "aud"]},
+        )
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Access token expired") from exc
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="Invalid access token") from exc
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserContext:
+    claims = decode_access_token(token)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).where(
+                User.id == claims["sub"],
+                User.tenant_id == claims["tenant_id"],
+                User.is_active.is_(True),
+            )
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=401, detail="User is inactive or no longer exists")
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.id == user.tenant_id, Tenant.is_active.is_(True))
+        )
+        if not tenant_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Organization is inactive")
+        return UserContext(
+            user_id=user.id, tenant_id=user.tenant_id, email=user.email,
+            role=user.role, groups=user.groups or [],
+        )
+
+
+def require_roles(*roles: str):
+    async def role_dependency(user: UserContext = Depends(get_current_user)) -> UserContext:
+        if user.role not in roles:
+            raise HTTPException(status_code=403, detail="You do not have permission for this operation")
+        return user
+    return role_dependency
+
+
+# ============================================================================
+
