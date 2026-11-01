@@ -1417,4 +1417,249 @@ async def explore_company_knowledge_graph(entity_name: str, depth: int = 2) -> d
 
 
 # ============================================================================
+# PART 8/10 — GOOGLE WORKSPACE / DRIVE OAUTH AND DOCUMENT SYNCHRONIZATION
+# ============================================================================
 
+
+GOOGLE_REDIRECT_URI = env_value("GOOGLE_REDIRECT_URI")
+GOOGLE_SCOPES = "openid email profile https://www.googleapis.com/auth/drive.readonly"
+
+
+@app.get("/api/v1/connectors/google/authorize", tags=["Connectors"])
+async def google_drive_authorize(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
+        raise HTTPException(status_code=503, detail="Set Client_Id, Client_Secret and GOOGLE_REDIRECT_URI in Render and register the exact callback URL in Google Cloud")
+    state = jwt.encode(
+        {"sub": user.user_id, "tenant_id": user.tenant_id, "nonce": secrets.token_urlsafe(24),
+         "provider": "google_drive", "exp": utc_now() + timedelta(minutes=10), "iss": JWT_ISSUER},
+        JWT_SECRET_KEY, algorithm=JWT_ALGORITHM,
+    )
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": GOOGLE_SCOPES,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
+    }
+    return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params), status_code=302)
+
+
+@app.get("/api/v1/connectors/google/callback", tags=["Connectors"])
+async def google_drive_callback(code: str, state: str):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
+        raise HTTPException(status_code=503, detail="Google Drive OAuth is not configured")
+    try:
+        claims = jwt.decode(state, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], issuer=JWT_ISSUER)
+        if claims.get("provider") != "google_drive":
+            raise ValueError("Wrong OAuth provider")
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state") from exc
+    async with AsyncSessionLocal() as session:
+        active_result = await session.execute(
+            select(User.id).join(Tenant, Tenant.id == User.tenant_id).where(
+                User.id == claims.get("sub"), User.tenant_id == claims.get("tenant_id"),
+                User.is_active.is_(True), Tenant.is_active.is_(True),
+                User.role.in_(["admin", "superadmin"]),
+            )
+        )
+        if not active_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="The authorizing administrator is no longer active")
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code, "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET, "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        token_data = response.json()
+    refresh_token = token_data.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Google did not return a refresh token. Revoke the previous app grant and authorize again with consent.")
+    try:
+        google_identity = google_id_token.verify_oauth2_token(
+            token_data.get("id_token", ""), google_requests.Request(), GOOGLE_CLIENT_ID
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Could not verify the Google account used to connect Drive") from exc
+    if not google_identity.get("email_verified"):
+        raise HTTPException(status_code=403, detail="The Google account email is not verified")
+    connected_email = str(google_identity.get("email", "")).lower()
+    encrypted_refresh = token_cipher.encrypt(refresh_token.encode()).decode()
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ConnectorAccount).where(
+                ConnectorAccount.tenant_id == claims["tenant_id"], ConnectorAccount.provider == "google_drive"
+            )
+        )
+        account = result.scalar_one_or_none()
+        if account:
+            account.encrypted_refresh_token = encrypted_refresh
+            account.external_account_id = connected_email
+            account.status = "connected"
+        else:
+            session.add(ConnectorAccount(
+                tenant_id=claims["tenant_id"], provider="google_drive",
+                encrypted_refresh_token=encrypted_refresh, external_account_id=connected_email, status="connected",
+            ))
+        await session.commit()
+    await create_audit_log(claims["tenant_id"], claims["sub"], "CONNECTOR_AUTHORIZED", "google_drive", {"connected_account": connected_email})
+    return {"status": "connected", "provider": "google_drive", "connected_account": connected_email, "next_step": "Run POST /api/v1/connectors/google/sync while signed in as an organization admin."}
+
+
+async def google_drive_access_token(refresh_token: str) -> str:
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
+                  "refresh_token": refresh_token, "grant_type": "refresh_token"},
+        )
+        response.raise_for_status()
+        return response.json()["access_token"]
+
+
+async def google_permissions(client: httpx.AsyncClient, access_token: str, file_id: str) -> list[str]:
+    response = await client.get(
+        f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
+        params={"fields": "permissions(type,emailAddress,domain,role)", "supportsAllDrives": "true"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    response.raise_for_status()
+    emails = []
+    for permission in response.json().get("permissions", []):
+        email = permission.get("emailAddress")
+        if email:
+            emails.append(email.lower())
+    return sorted(set(emails))
+
+
+@app.post("/api/v1/connectors/google/sync", tags=["Connectors"])
+async def sync_google_drive(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        raise HTTPException(status_code=503, detail="Google OAuth credentials are missing")
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ConnectorAccount).where(
+                ConnectorAccount.tenant_id == user.tenant_id,
+                ConnectorAccount.provider == "google_drive",
+            )
+        )
+        account = result.scalar_one_or_none()
+        if not account or not account.encrypted_refresh_token:
+            raise HTTPException(status_code=409, detail="Authorize Google Drive before syncing")
+        try:
+            refresh_token = token_cipher.decrypt(account.encrypted_refresh_token.encode()).decode()
+        except InvalidToken as exc:
+            raise HTTPException(status_code=500, detail="Stored Google token could not be decrypted") from exc
+    access_token = await google_drive_access_token(refresh_token)
+    headers = {"Authorization": f"Bearer {access_token}"}
+    imported = 0
+    page_token = None
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        while True:
+            params = {
+                "q": "trashed = false",
+                "pageSize": 100,
+                "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress),size)",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = await client.get("https://www.googleapis.com/drive/v3/files", params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            for item in data.get("files", []):
+                mime = item.get("mimeType", "")
+                if mime == "application/vnd.google-apps.folder":
+                    continue
+                file_id = item["id"]
+                acl_emails = await google_permissions(client, access_token, file_id)
+                # Fail closed: do not index a file when its ACL cannot be read.
+                content = ""
+                if mime.startswith("application/vnd.google-apps."):
+                    export_mime = (
+                        "text/csv" if mime == "application/vnd.google-apps.spreadsheet"
+                        else "text/plain"
+                    )
+                    content_response = await client.get(
+                        f"https://www.googleapis.com/drive/v3/files/{file_id}/export",
+                        params={"mimeType": export_mime}, headers=headers,
+                    )
+                else:
+                    content_response = await client.get(
+                        f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                        params={"alt": "media", "supportsAllDrives": "true"}, headers=headers,
+                    )
+                if content_response.status_code == 200:
+                    raw = content_response.content
+                    if mime == "application/pdf":
+                        try:
+                            content = extract_file_text("source.pdf", raw)
+                        except Exception:
+                            content = ""
+                    elif mime in {"text/plain", "text/csv", "application/vnd.google-apps.document", "application/vnd.google-apps.spreadsheet"} or mime.startswith("application/vnd.google-apps."):
+                        content = raw.decode("utf-8", errors="replace")
+                if not content.strip():
+                    continue
+                owner_list = item.get("owners", [])
+                owner_email = owner_list[0].get("emailAddress") if owner_list else None
+                digest = hashlib.sha256(content.encode()).hexdigest()
+                async with AsyncSessionLocal() as db:
+                    existing_result = await db.execute(
+                        select(DocumentRecord).where(
+                            DocumentRecord.tenant_id == user.tenant_id,
+                            DocumentRecord.source_app == "google_drive",
+                            DocumentRecord.external_id == file_id,
+                        )
+                    )
+                    record = existing_result.scalar_one_or_none()
+                    values = {
+                        "title": item.get("name", "Google Drive file"), "filename": item.get("name"),
+                        "content": content, "content_hash": digest, "source_url": item.get("webViewLink"),
+                        "author_name": owner_email, "acl_user_ids": [], "acl_emails": acl_emails,
+                        "acl_groups": [], "status": "indexed",
+                        "metadata_json": {"mime_type": mime, "modified_time": item.get("modifiedTime")},
+                    }
+                    if record:
+                        for key, value in values.items():
+                            setattr(record, key, value)
+                    else:
+                        record = DocumentRecord(
+                            tenant_id=user.tenant_id, source_app="google_drive", external_id=file_id,
+                            uploaded_by=None, **values,
+                        )
+                        db.add(record)
+                    await db.commit()
+                    doc_id = record.id
+                try:
+                    await index_document_embeddings(user.tenant_id, doc_id, content)
+                except Exception:
+                    logger.exception("Google Drive embedding indexing failed for %s", file_id)
+                try:
+                    await index_document_graph(user.tenant_id, doc_id, item.get("name", "Drive file"), content)
+                except Exception:
+                    logger.exception("Google Drive graph indexing failed for %s", file_id)
+                imported += 1
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ConnectorAccount).where(ConnectorAccount.tenant_id == user.tenant_id, ConnectorAccount.provider == "google_drive")
+        )
+        account = result.scalar_one()
+        account.last_sync_at = utc_now()
+        await session.commit()
+    await create_audit_log(user.tenant_id, user.user_id, "CONNECTOR_SYNC", "google_drive", {"indexed": imported})
+    return {"provider": "google_drive", "indexed_or_updated": imported, "status": "completed"}
+
+
+# ============================================================================
+            
