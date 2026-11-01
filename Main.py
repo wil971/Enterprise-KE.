@@ -2058,4 +2058,401 @@ async def sync_microsoft_teams(user: UserContext = Depends(require_roles("admin"
     configured_team_prefixes = tuple(f"msteams-channel:{team_id}:".lower() for team_id in MICROSOFT_TEAM_IDS)
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
         for team_id in MICROSOFT_TEAM_IDS:
-            team_          
+            team_  
+            # PART 10/10 — M-PESA BILLING, AUDIT VERIFICATION, FASTMCP MOUNT AND LIFESPAN
+# ============================================================================
+
+
+MPESA_ENVIRONMENT = env_value("MPESA_ENVIRONMENT", default="sandbox").lower()
+MPESA_CONSUMER_KEY = env_value("MPESA_CONSUMER_KEY")
+MPESA_CONSUMER_SECRET = env_value("MPESA_CONSUMER_SECRET")
+MPESA_SHORTCODE = env_value("MPESA_SHORTCODE")
+MPESA_PASSKEY = env_value("MPESA_PASSKEY")
+MPESA_CALLBACK_URL = env_value("MPESA_CALLBACK_URL")
+MPESA_TRANSACTION_TYPE = env_value("MPESA_TRANSACTION_TYPE", default="CustomerPayBillOnline")
+MPESA_BASE_URL = "https://api.safaricom.co.ke" if MPESA_ENVIRONMENT == "production" else "https://sandbox.safaricom.co.ke"
+
+
+def normalize_ke_phone(phone: str) -> str:
+    digits = re.sub(r"\D", "", phone)
+    if digits.startswith("0") and len(digits) == 10:
+        digits = "254" + digits[1:]
+    elif digits.startswith("7") or digits.startswith("1"):
+        if len(digits) == 9:
+            digits = "254" + digits
+    if not re.fullmatch(r"254[17]\d{8}", digits):
+        raise HTTPException(status_code=422, detail="Enter a valid Kenyan Safaricom-format phone number")
+    return digits
+
+
+async def mpesa_access_token() -> str:
+    if not all([MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_SHORTCODE, MPESA_PASSKEY, MPESA_CALLBACK_URL]):
+        raise HTTPException(status_code=503, detail="M-Pesa Daraja is not configured. Add the MPESA_* credentials and a public HTTPS callback URL in Render.")
+    credentials = base64.b64encode(f"{MPESA_CONSUMER_KEY}:{MPESA_CONSUMER_SECRET}".encode()).decode()
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            f"{MPESA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials",
+            headers={"Authorization": f"Basic {credentials}"},
+        )
+        response.raise_for_status()
+        return response.json()["access_token"]
+
+
+async def mpesa_stk_query(access_token: str, checkout_request_id: str) -> dict[str, Any]:
+    timestamp = datetime.now(ZoneInfo("Africa/Nairobi")).strftime("%Y%m%d%H%M%S")
+    password = base64.b64encode(f"{MPESA_SHORTCODE}{MPESA_PASSKEY}{timestamp}".encode()).decode()
+    payload = {
+        "BusinessShortCode": MPESA_SHORTCODE,
+        "Password": password,
+        "Timestamp": timestamp,
+        "CheckoutRequestID": checkout_request_id,
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{MPESA_BASE_URL}/mpesa/stkpushquery/v1/query", json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+@app.get("/api/v1/billing/plans", tags=["Billing"])
+async def get_subscription_plans(user: UserContext = Depends(get_current_user)):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(SubscriptionPlan).where(SubscriptionPlan.is_active.is_(True)).order_by(SubscriptionPlan.price_kes))
+        plans = result.scalars().all()
+        return [{
+            "code": plan.code, "name": plan.name, "price_kes": float(plan.price_kes),
+            "billing_days": plan.billing_days, "seats": plan.seats,
+        } for plan in plans]
+
+
+@app.post("/api/v1/billing/plans", tags=["Billing"])
+async def create_subscription_plan(payload: CreatePlanRequest, user: UserContext = Depends(require_roles("superadmin"))):
+    async with AsyncSessionLocal() as session:
+        existing = await session.execute(select(SubscriptionPlan).where(SubscriptionPlan.code == payload.code))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Plan code already exists")
+        plan = SubscriptionPlan(
+            code=payload.code, name=payload.name, price_kes=payload.price_kes,
+            billing_days=payload.billing_days, seats=payload.seats, is_active=True,
+        )
+        session.add(plan)
+        await session.commit()
+        plan_id = plan.id
+    await create_audit_log(user.tenant_id, user.user_id, "SUBSCRIPTION_PLAN_CREATED", plan_id, {"code": payload.code, "price_kes": payload.price_kes})
+    return {"id": plan_id, "code": payload.code, "status": "created"}
+
+
+@app.post("/api/v1/billing/mpesa/stk-push", tags=["Billing"])
+async def initiate_mpesa_payment(payload: MpesaCheckoutRequest, request: Request, user: UserContext = Depends(get_current_user)):
+    phone = normalize_ke_phone(payload.phone_number)
+    if not all([MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_SHORTCODE, MPESA_PASSKEY, MPESA_CALLBACK_URL]):
+        raise HTTPException(status_code=503, detail="M-Pesa Daraja credentials and public callback URL are not configured in Render")
+    async with AsyncSessionLocal() as session:
+        plan_result = await session.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.code == payload.plan_code, SubscriptionPlan.is_active.is_(True))
+        )
+        plan = plan_result.scalar_one_or_none()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Subscription plan not found")
+        amount = int(plan.price_kes)
+        if amount < 1 or float(plan.price_kes) != amount:
+            raise HTTPException(status_code=422, detail="M-Pesa STK Push requires a whole-number KES plan price")
+        payment = PaymentRecord(
+            tenant_id=user.tenant_id, plan_id=plan.id, amount=plan.price_kes,
+            currency="KES", phone_number=phone, provider="mpesa", status="initiating",
+        )
+        session.add(payment)
+        await session.commit()
+        payment_id, shortcode = payment.id, MPESA_SHORTCODE
+    try:
+        access_token = await mpesa_access_token()
+        timestamp = datetime.now(ZoneInfo("Africa/Nairobi")).strftime("%Y%m%d%H%M%S")
+        password = base64.b64encode(f"{shortcode}{MPESA_PASSKEY}{timestamp}".encode()).decode()
+        stk_payload = {
+            "BusinessShortCode": shortcode,
+            "Password": password,
+            "Timestamp": timestamp,
+            "TransactionType": MPESA_TRANSACTION_TYPE,
+            "Amount": amount,
+            "PartyA": phone,
+            "PartyB": shortcode,
+            "PhoneNumber": phone,
+            "CallBackURL": MPESA_CALLBACK_URL,
+            "AccountReference": f"ENT-{payment_id[:12]}",
+            "TransactionDesc": f"Enterprise plan {payload.plan_code}"[:100],
+        }
+        async with httpx.AsyncClient(timeout=45) as client:
+            response = await client.post(
+                f"{MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest",
+                json=stk_payload,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            response.raise_for_status()
+            result = response.json()
+        checkout_id = result.get("CheckoutRequestID")
+        if not checkout_id:
+            raise RuntimeError(f"Daraja did not return CheckoutRequestID: {result.get('ResponseDescription', 'unknown response')}")
+        async with AsyncSessionLocal() as session:
+            payment_result = await session.execute(select(PaymentRecord).where(PaymentRecord.id == payment_id))
+            payment_row = payment_result.scalar_one()
+            payment_row.status = "pending"
+            payment_row.checkout_request_id = checkout_id
+            payment_row.merchant_request_id = result.get("MerchantRequestID")
+            payment_row.result_description = result.get("CustomerMessage") or result.get("ResponseDescription")
+            await session.commit()
+    except Exception as exc:
+        logger.exception("M-Pesa STK push initiation failed")
+        async with AsyncSessionLocal() as session:
+            payment_result = await session.execute(select(PaymentRecord).where(PaymentRecord.id == payment_id))
+            payment_row = payment_result.scalar_one_or_none()
+            if payment_row:
+                payment_row.status = "failed"
+                payment_row.result_description = "Payment request could not be initiated"
+                await session.commit()
+        raise HTTPException(status_code=502, detail="The M-Pesa payment request could not be initiated") from exc
+    await create_audit_log(user.tenant_id, user.user_id, "PAYMENT_INITIATED", payment_id, {"plan_code": payload.plan_code, "amount_kes": amount}, request.client.host if request.client else None)
+    return {"payment_id": payment_id, "status": "pending", "provider": "mpesa", "message": "Check the phone for the M-Pesa payment prompt."}
+
+
+@app.post("/api/v1/billing/mpesa/callback", tags=["Billing Webhooks"])
+async def mpesa_callback(payload: dict[str, Any]):
+    callback = (payload.get("Body") or {}).get("stkCallback") or {}
+    checkout_id = callback.get("CheckoutRequestID")
+    result_code = str(callback.get("ResultCode", ""))
+    result_description = str(callback.get("ResultDesc", ""))[:500]
+    if not checkout_id:
+        return {"ResultCode": 0, "ResultDesc": "Callback received"}
+    async with AsyncSessionLocal() as session:
+        payment_result = await session.execute(
+            select(PaymentRecord).where(PaymentRecord.checkout_request_id == checkout_id).with_for_update()
+        )
+        payment = payment_result.scalar_one_or_none()
+        if not payment:
+            logger.warning("Received M-Pesa callback for an unknown checkout request")
+            return {"ResultCode": 0, "ResultDesc": "Callback acknowledged"}
+        if payment.status in {"succeeded", "failed"}:
+            return {"ResultCode": 0, "ResultDesc": "Callback already processed"}
+        payment.result_code = result_code
+        payment.result_description = result_description
+        await session.commit()
+        payment_id, tenant_id, plan_id = payment.id, payment.tenant_id, payment.plan_id
+        expected_amount = int(payment.amount)
+    # Daraja callbacks are not treated as signed proof. Independently query the
+    # provider and match the known CheckoutRequestID before activating a plan.
+    try:
+        access_token = await mpesa_access_token()
+        provider_status = await mpesa_stk_query(access_token, checkout_id)
+    except Exception:
+        logger.exception("Could not independently verify M-Pesa callback; payment remains pending")
+        return {"ResultCode": 0, "ResultDesc": "Callback received; verification pending"}
+    provider_code = str(provider_status.get("ResultCode", ""))
+    is_success = provider_code == "0" and result_code == "0"
+    async with AsyncSessionLocal() as session:
+        payment_result = await session.execute(select(PaymentRecord).where(PaymentRecord.id == payment_id).with_for_update())
+        payment = payment_result.scalar_one()
+        if is_success:
+            metadata = (callback.get("CallbackMetadata") or {}).get("Item", [])
+            values = {item.get("Name"): item.get("Value") for item in metadata if isinstance(item, dict)}
+            callback_amount = values.get("Amount")
+            receipt = values.get("MpesaReceiptNumber")
+            if callback_amount is None or int(callback_amount) != expected_amount or not receipt:
+                payment.status = "review_required"
+                payment.result_description = "Provider callback did not match expected amount/receipt; manual review required"
+            else:
+                payment.status = "succeeded"
+                payment.provider_receipt = str(receipt)
+                subscription_result = await session.execute(
+                    select(Subscription).where(Subscription.tenant_id == tenant_id).with_for_update()
+                )
+                subscription = subscription_result.scalar_one_or_none()
+                plan_result = await session.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id))
+                plan = plan_result.scalar_one()
+                now = utc_now()
+                if not subscription:
+                    subscription = Subscription(tenant_id=tenant_id, plan_id=plan_id, status="active")
+                    session.add(subscription)
+                subscription.plan_id = plan_id
+                subscription.status = "active"
+                subscription.current_period_start = now
+                subscription.current_period_end = now + timedelta(days=plan.billing_days)
+        else:
+            payment.status = "failed"
+        await session.commit()
+    await create_audit_log(tenant_id, None, "PAYMENT_CALLBACK_PROCESSED", payment_id, {"status": "succeeded" if is_success else "failed_or_pending"})
+    return {"ResultCode": 0, "ResultDesc": "Callback processed"}
+
+
+@app.get("/api/v1/billing/subscription", tags=["Billing"])
+async def get_tenant_subscription(user: UserContext = Depends(get_current_user)):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Subscription, SubscriptionPlan)
+            .outerjoin(SubscriptionPlan, SubscriptionPlan.id == Subscription.plan_id)
+            .where(Subscription.tenant_id == user.tenant_id)
+        )
+        row = result.first()
+        if not row:
+            return {"status": "inactive", "plan": None}
+        subscription, plan = row
+        return {
+            "status": subscription.status,
+            "plan": {"code": plan.code, "name": plan.name, "price_kes": float(plan.price_kes)} if plan else None,
+            "period_start": subscription.current_period_start.isoformat() if subscription.current_period_start else None,
+            "period_end": subscription.current_period_end.isoformat() if subscription.current_period_end else None,
+        }
+
+
+@app.get("/api/v1/admin/audit-logs", tags=["Governance"])
+async def list_audit_logs(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, le=100000),
+    user: UserContext = Depends(require_roles("admin", "superadmin")),
+):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AuditLog).where(AuditLog.tenant_id == user.tenant_id)
+            .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+            .offset(offset).limit(limit)
+        )
+        rows = result.scalars().all()
+    return {
+        "items": [{
+            "id": row.id, "user_id": row.user_id, "action": row.action,
+            "resource": row.resource, "metadata": row.metadata_json,
+            "ip_address": row.ip_address, "timestamp": row.timestamp.isoformat(),
+            "signature": row.signature,
+        } for row in rows],
+        "limit": limit, "offset": offset,
+    }
+
+
+@app.get("/api/v1/admin/audit-logs/verify", tags=["Governance"])
+async def verify_audit_chain(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AuditLog).where(AuditLog.tenant_id == user.tenant_id)
+            .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc()).limit(1000)
+        )
+        rows = list(reversed(result.scalars().all()))
+    verified = 0
+    tampered: list[str] = []
+    previous = rows[0].previous_signature if rows else None
+    for row in rows:
+        # A truncated 1,000-event window may begin in the middle of the chain;
+        # validate that record's HMAC, then verify links between every returned pair.
+        if (row is not rows[0] and row.previous_signature != previous) or not await verify_audit_signature(row):
+            tampered.append(row.id)
+        else:
+            verified += 1
+        previous = row.signature
+    return {
+        "tenant_id": user.tenant_id,
+        "evaluated": len(rows),
+        "verified": verified,
+        "tampered": tampered,
+        "status": "PASSED" if not tampered else "TAMPER_DETECTED",
+        "note": "The endpoint verifies the latest 1,000 events in timestamp order.",
+    }
+
+
+# FastMCP's ASGI lifespan must be included in the parent FastAPI lifespan.
+mcp_asgi = mcp.http_app(path="/")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global neo4j_connected
+    async with mcp_asgi.lifespan(app):
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text("SELECT 1"))
+                await connection.execute(text("CREATE SCHEMA IF NOT EXISTS extensions"))
+                await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions"))
+                await connection.run_sync(Base.metadata.create_all)
+                await connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_hnsw "
+                    "ON document_chunks USING hnsw (embedding vector_cosine_ops)"
+                ))
+            await neo4j_driver.verify_connectivity()
+            async with neo4j_driver.session(database=NEO4J_DATABASE) as graph_session:
+                await graph_session.run(
+                    "CREATE CONSTRAINT entity_tenant_name IF NOT EXISTS "
+                    "FOR (e:Entity) REQUIRE (e.tenant_id, e.name_key) IS UNIQUE"
+                )
+                await graph_session.run(
+                    "CREATE CONSTRAINT document_tenant_id IF NOT EXISTS "
+                    "FOR (d:Document) REQUIRE (d.tenant_id, d.document_id) IS UNIQUE"
+                )
+            neo4j_connected = True
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    await bootstrap_first_tenant(session)
+            logger.info("PostgreSQL and Neo4j initialized; application startup complete")
+            yield
+        finally:
+            neo4j_connected = False
+            await neo4j_driver.close()
+            await engine.dispose()
+            logger.info("Enterprise API shutdown complete")
+
+
+# Replace the placeholder lifespan with the combined database + FastMCP lifespan.
+app.router.lifespan_context = lifespan
+app.mount("/mcp", mcp_asgi)
+
+
+@app.get("/", tags=["System"])
+async def root():
+    return {
+        "service": PROJECT_NAME,
+        "version": PROJECT_VERSION,
+        "status": "online",
+        "api_docs": "/docs",
+        "health": "/api/v1/health",
+        "mcp": "/mcp/",
+    }
+
+
+@app.get("/health", tags=["System"])
+@app.get("/api/v1/health", tags=["System"])
+async def health():
+    database_ok = False
+    graph_ok = False
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        database_ok = True
+    except Exception:
+        logger.exception("PostgreSQL health check failed")
+    try:
+        if neo4j_connected:
+            await neo4j_driver.verify_connectivity()
+            graph_ok = True
+    except Exception:
+        logger.exception("Neo4j health check failed")
+    healthy = database_ok and graph_ok
+    return {
+        "status": "healthy" if healthy else "degraded",
+        "version": PROJECT_VERSION,
+        "postgresql": "connected" if database_ok else "unavailable",
+        "neo4j": "connected" if graph_ok else "unavailable",
+        "nvidia_configured": bool(NVIDIA_API_KEY),
+        "external_ai_processing_allowed": ALLOW_EXTERNAL_AI_PROCESSING,
+        "semantic_search_configured": bool(NVIDIA_API_KEY and ALLOW_EXTERNAL_AI_PROCESSING),
+        "google_drive_configured": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI),
+        "microsoft_graph_configured": bool(MICROSOFT_TENANT_ID and MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET and (MICROSOFT_DRIVE_ID or MICROSOFT_MAILBOXES or MICROSOFT_TEAM_IDS)),
+        "mpesa_configured": bool(MPESA_CONSUMER_KEY and MPESA_CONSUMER_SECRET and MPESA_SHORTCODE and MPESA_PASSKEY and MPESA_CALLBACK_URL),
+    }
+
+
+@app.get("/api/v1/connectors/status", tags=["Connectors"])
+async def connector_status(user: UserContext = Depends(get_current_user)):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ConnectorAccount).where(ConnectorAccount.tenant_id == user.tenant_id)
+        )
+        accounts = result.scalars().all()
+    configured = {
+        "google_drive": bool(GOOGLE)
