@@ -1662,4 +1662,400 @@ async def sync_google_drive(user: UserContext = Depends(require_roles("admin", "
 
 
 # ============================================================================
-            
+  # PART 9/10 — MICROSOFT 365 / SHAREPOINT CONNECTOR USING MICROSOFT GRAPH
+# ============================================================================
+
+
+MICROSOFT_TENANT_ID = env_value("MICROSOFT_TENANT_ID")
+MICROSOFT_CLIENT_ID = env_value("MICROSOFT_CLIENT_ID")
+MICROSOFT_CLIENT_SECRET = env_value("MICROSOFT_CLIENT_SECRET")
+MICROSOFT_DRIVE_ID = env_value("MICROSOFT_DRIVE_ID")
+MICROSOFT_MAILBOXES = [
+    item.strip().lower() for item in env_value("MICROSOFT_MAILBOXES", default="").split(",") if item.strip()
+]
+MICROSOFT_TEAM_IDS = [
+    item.strip() for item in env_value("MICROSOFT_TEAM_IDS", default="").split(",") if item.strip()
+]
+MICROSOFT_MAX_ITEMS_PER_MAILBOX = int(env_value("MICROSOFT_MAX_ITEMS_PER_MAILBOX", default="1000"))
+GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+
+
+async def microsoft_graph_token() -> str:
+    if not all([MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET]):
+        raise HTTPException(status_code=503, detail="Microsoft Graph requires MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET")
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"https://login.microsoftonline.com/{MICROSOFT_TENANT_ID}/oauth2/v2.0/token",
+            data={
+                "client_id": MICROSOFT_CLIENT_ID,
+                "client_secret": MICROSOFT_CLIENT_SECRET,
+                "scope": "https://graph.microsoft.com/.default",
+                "grant_type": "client_credentials",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        return response.json()["access_token"]
+
+
+def graph_permission_emails(permission_response: dict[str, Any]) -> list[str]:
+    emails: set[str] = set()
+    for permission in permission_response.get("value", []):
+        for identity_key in ("grantedToV2",):
+            identity_set = permission.get(identity_key) or {}
+            for identity_type in ("user", "group", "siteUser", "siteGroup", "application"):
+                identity = identity_set.get(identity_type) or {}
+                email = identity.get("email") or identity.get("userPrincipalName")
+                if email and "@" in email:
+                    emails.add(email.lower())
+        for identity_set in permission.get("grantedToIdentitiesV2", []) or []:
+            for identity_type in ("user", "group", "siteUser", "siteGroup"):
+                identity = identity_set.get(identity_type) or {}
+                email = identity.get("email") or identity.get("userPrincipalName")
+                if email and "@" in email:
+                    emails.add(email.lower())
+    return sorted(emails)
+
+
+@app.post("/api/v1/connectors/microsoft/sharepoint/sync", tags=["Connectors"])
+async def sync_microsoft_sharepoint(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    if not MICROSOFT_DRIVE_ID:
+        raise HTTPException(status_code=503, detail="Set MICROSOFT_DRIVE_ID to the SharePoint/OneDrive drive to sync")
+    access_token = await microsoft_graph_token()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with AsyncSessionLocal() as session:
+        account_result = await session.execute(
+            select(ConnectorAccount).where(
+                ConnectorAccount.tenant_id == user.tenant_id,
+                ConnectorAccount.provider == "microsoft_sharepoint",
+            )
+        )
+        account = account_result.scalar_one_or_none()
+        cursor = account.sync_cursor if account else None
+    delta_url = cursor or f"{GRAPH_BASE_URL}/drives/{MICROSOFT_DRIVE_ID}/root/delta"
+    imported = 0
+    deleted = 0
+    latest_delta_link = None
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        while delta_url:
+            response = await client.get(delta_url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            for item in data.get("value", []):
+                item_id = item.get("id")
+                if not item_id:
+                    continue
+                async with AsyncSessionLocal() as db:
+                    existing_result = await db.execute(
+                        select(DocumentRecord).where(
+                            DocumentRecord.tenant_id == user.tenant_id,
+                            DocumentRecord.source_app == "microsoft_sharepoint",
+                            DocumentRecord.external_id == item_id,
+                        )
+                    )
+                    existing = existing_result.scalar_one_or_none()
+                    if item.get("deleted") is not None:
+                        if existing:
+                            await db.delete(existing)
+                            await db.commit()
+                            deleted += 1
+                        continue
+                if "file" not in item or "folder" in item:
+                    continue
+                perm_response = await client.get(
+                    f"{GRAPH_BASE_URL}/drives/{MICROSOFT_DRIVE_ID}/items/{item_id}/permissions",
+                    headers=headers,
+                )
+                # Do not make inaccessible documents visible if permission sync fails.
+                perm_response.raise_for_status()
+                acl_emails = graph_permission_emails(perm_response.json())
+                content_response = await client.get(
+                    f"{GRAPH_BASE_URL}/drives/{MICROSOFT_DRIVE_ID}/items/{item_id}/content",
+                    headers=headers,
+                    follow_redirects=True,
+                )
+                content_response.raise_for_status()
+                filename = item.get("name", "SharePoint document")
+                try:
+                    content = extract_file_text(filename, content_response.content)
+                except HTTPException:
+                    continue
+                except Exception:
+                    logger.exception("Could not extract Microsoft file %s", item_id)
+                    continue
+                if not content.strip():
+                    continue
+                digest = hashlib.sha256(content.encode()).hexdigest()
+                async with AsyncSessionLocal() as db:
+                    existing_result = await db.execute(
+                        select(DocumentRecord).where(
+                            DocumentRecord.tenant_id == user.tenant_id,
+                            DocumentRecord.source_app == "microsoft_sharepoint",
+                            DocumentRecord.external_id == item_id,
+                        )
+                    )
+                    record = existing_result.scalar_one_or_none()
+                    values = {
+                        "title": filename[:500], "filename": filename[:500], "content": content,
+                        "content_hash": digest, "source_url": item.get("webUrl"),
+                        "acl_user_ids": [], "acl_emails": acl_emails, "acl_groups": [],
+                        "status": "indexed",
+                        "metadata_json": {"mime_type": item.get("file", {}).get("mimeType"), "etag": item.get("eTag")},
+                    }
+                    if record:
+                        for key, value in values.items():
+                            setattr(record, key, value)
+                    else:
+                        record = DocumentRecord(
+                            tenant_id=user.tenant_id, source_app="microsoft_sharepoint",
+                            external_id=item_id, uploaded_by=None, **values,
+                        )
+                        db.add(record)
+                    await db.commit()
+                    doc_id = record.id
+                try:
+                    await index_document_embeddings(user.tenant_id, doc_id, content)
+                except Exception:
+                    logger.exception("Microsoft Graph embedding indexing failed for %s", item_id)
+                try:
+                    await index_document_graph(user.tenant_id, doc_id, filename, content)
+                except Exception:
+                    logger.exception("Microsoft Graph indexing failed for %s", item_id)
+                imported += 1
+            delta_url = data.get("@odata.nextLink")
+            latest_delta_link = data.get("@odata.deltaLink") or latest_delta_link
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ConnectorAccount).where(
+                ConnectorAccount.tenant_id == user.tenant_id,
+                ConnectorAccount.provider == "microsoft_sharepoint",
+            )
+        )
+        account = result.scalar_one_or_none()
+        if not account:
+            account = ConnectorAccount(
+                tenant_id=user.tenant_id, provider="microsoft_sharepoint",
+                external_account_id=MICROSOFT_DRIVE_ID,
+            )
+            session.add(account)
+        account.sync_cursor = latest_delta_link or cursor
+        account.last_sync_at = utc_now()
+        account.status = "connected"
+        await session.commit()
+    await create_audit_log(
+        user.tenant_id, user.user_id, "CONNECTOR_SYNC", "microsoft_sharepoint",
+        {"indexed_or_updated": imported, "deleted": deleted},
+    )
+    return {"provider": "microsoft_sharepoint", "indexed_or_updated": imported, "deleted": deleted, "status": "completed"}
+
+
+def graph_html_to_text(value: str) -> str:
+    """Convert Graph HTML bodies into searchable plain text."""
+    value = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", value or "")
+    value = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h[1-6])>", "\n", value)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return re.sub(r"\s+", " ", html_lib.unescape(value)).strip()
+
+
+async def graph_paginated_items(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    params: Optional[dict[str, Any]] = None,
+    max_items: int = 1000,
+) -> list[dict[str, Any]]:
+    """Read Graph @odata.nextLink pages while enforcing a configured cap."""
+    items: list[dict[str, Any]] = []
+    next_url: Optional[str] = url
+    next_params = params
+    while next_url and len(items) < max_items:
+        response = await client.get(next_url, headers=headers, params=next_params)
+        response.raise_for_status()
+        page = response.json()
+        batch = page.get("value", [])
+        if not isinstance(batch, list):
+            raise RuntimeError("Microsoft Graph returned an invalid collection")
+        remaining = max_items - len(items)
+        items.extend(item for item in batch[:remaining] if isinstance(item, dict))
+        next_url = page.get("@odata.nextLink")
+        next_params = None
+    return items
+
+
+async def upsert_microsoft_record(
+    tenant_id: str,
+    source_app: str,
+    external_id: str,
+    title: str,
+    content: str,
+    source_url: Optional[str],
+    author_name: Optional[str],
+    acl_emails: list[str],
+    acl_groups: Optional[list[str]] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> str:
+    """Upsert one Microsoft Graph item and keep SQL, embeddings and Neo4j in sync."""
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.tenant_id == tenant_id,
+                DocumentRecord.source_app == source_app,
+                DocumentRecord.external_id == external_id,
+            )
+        )
+        record = result.scalar_one_or_none()
+        values = {
+            "title": title[:500], "filename": title[:500], "content": content,
+            "content_hash": digest, "source_url": source_url,
+            "author_name": author_name, "acl_user_ids": [],
+            "acl_emails": sorted({email.lower() for email in acl_emails if email}),
+            "acl_groups": acl_groups or [], "status": "indexed",
+            "metadata_json": metadata or {},
+        }
+        if record:
+            for key, value in values.items():
+                setattr(record, key, value)
+        else:
+            record = DocumentRecord(
+                tenant_id=tenant_id, source_app=source_app,
+                external_id=external_id, uploaded_by=None, **values,
+            )
+            session.add(record)
+        await session.commit()
+        document_id = record.id
+    try:
+        await index_document_embeddings(tenant_id, document_id, content)
+    except Exception:
+        logger.exception("Embedding update failed for %s item %s", source_app, external_id)
+    try:
+        await index_document_graph(tenant_id, document_id, title, content)
+    except Exception:
+        logger.exception("Graph update failed for %s item %s", source_app, external_id)
+    return document_id
+
+
+async def mark_microsoft_connector_connected(tenant_id: str, provider: str, external_account_id: Optional[str] = None) -> None:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ConnectorAccount).where(
+                ConnectorAccount.tenant_id == tenant_id,
+                ConnectorAccount.provider == provider,
+            )
+        )
+        account = result.scalar_one_or_none()
+        if account is None:
+            account = ConnectorAccount(
+                tenant_id=tenant_id, provider=provider,
+                external_account_id=external_account_id,
+                status="connected", last_sync_at=utc_now(),
+            )
+            session.add(account)
+        else:
+            account.external_account_id = external_account_id or account.external_account_id
+            account.status = "connected"
+            account.last_sync_at = utc_now()
+        await session.commit()
+
+
+@app.post("/api/v1/connectors/microsoft/outlook/sync", tags=["Connectors"])
+async def sync_microsoft_outlook(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    """Index selected mailboxes only; each message is visible to its source mailbox owner."""
+    if not MICROSOFT_MAILBOXES:
+        raise HTTPException(status_code=503, detail="Set MICROSOFT_MAILBOXES to a comma-separated allowlist of mailboxes")
+    token = await microsoft_graph_token()
+    headers = {"Authorization": f"Bearer {token}", "Prefer": 'outlook.body-content-type="text"'}
+    imported = 0
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        for mailbox in MICROSOFT_MAILBOXES:
+            mailbox_path = quote(mailbox, safe="")
+            url = f"{GRAPH_BASE_URL}/users/{mailbox_path}/messages"
+            messages = await graph_paginated_items(
+                client, url, headers,
+                params={
+                    "$top": "50",
+                    "$select": "id,subject,body,from,receivedDateTime,webLink,internetMessageId",
+                },
+                max_items=MICROSOFT_MAX_ITEMS_PER_MAILBOX,
+            )
+            for message in messages:
+                body = message.get("body") or {}
+                body_text = body.get("content", "")
+                if body.get("contentType", "").lower() == "html":
+                    body_text = graph_html_to_text(body_text)
+                sender = ((message.get("from") or {}).get("emailAddress") or {}).get("address")
+                subject = message.get("subject") or "(No subject)"
+                content = f"Subject: {subject}\nFrom: {sender or 'Unknown'}\nReceived: {message.get('receivedDateTime', '')}\n\n{body_text}".strip()
+                if not content:
+                    continue
+                await upsert_microsoft_record(
+                    user.tenant_id, "microsoft_outlook", message["id"], subject,
+                    content, message.get("webLink"), sender, [mailbox],
+                    metadata={"mailbox": mailbox, "received_at": message.get("receivedDateTime"),
+                              "internet_message_id": message.get("internetMessageId")},
+                )
+                imported += 1
+    await mark_microsoft_connector_connected(user.tenant_id, "microsoft_outlook", MICROSOFT_MAILBOXES[0])
+    await create_audit_log(user.tenant_id, user.user_id, "CONNECTOR_SYNC", "microsoft_outlook", {"indexed_or_updated": imported})
+    return {"provider": "microsoft_outlook", "indexed_or_updated": imported, "mailboxes": len(MICROSOFT_MAILBOXES)}
+
+
+@app.post("/api/v1/connectors/microsoft/calendar/sync", tags=["Connectors"])
+async def sync_microsoft_calendar(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    """Index selected calendars with mailbox-owner ACLs; attendee status is not treated as access."""
+    if not MICROSOFT_MAILBOXES:
+        raise HTTPException(status_code=503, detail="Set MICROSOFT_MAILBOXES to a comma-separated allowlist of mailboxes")
+    token = await microsoft_graph_token()
+    headers = {"Authorization": f"Bearer {token}", "Prefer": 'outlook.body-content-type="text"'}
+    imported = 0
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        for mailbox in MICROSOFT_MAILBOXES:
+            mailbox_path = quote(mailbox, safe="")
+            url = f"{GRAPH_BASE_URL}/users/{mailbox_path}/calendar/events"
+            events = await graph_paginated_items(
+                client, url, headers,
+                params={
+                    "$top": "50",
+                    "$select": "id,subject,body,start,end,organizer,location,webLink,isAllDay",
+                },
+                max_items=MICROSOFT_MAX_ITEMS_PER_MAILBOX,
+            )
+            for event in events:
+                body = event.get("body") or {}
+                body_text = body.get("content", "")
+                if body.get("contentType", "").lower() == "html":
+                    body_text = graph_html_to_text(body_text)
+                organizer = ((event.get("organizer") or {}).get("emailAddress") or {}).get("address")
+                subject = event.get("subject") or "(No subject)"
+                start_time = (event.get("start") or {}).get("dateTime", "")
+                end_time = (event.get("end") or {}).get("dateTime", "")
+                location = (event.get("location") or {}).get("displayName", "")
+                content = (
+                    f"Meeting: {subject}\nStart: {start_time}\nEnd: {end_time}\n"
+                    f"Location: {location}\nOrganizer: {organizer or 'Unknown'}\n\n{body_text}"
+                ).strip()
+                await upsert_microsoft_record(
+                    user.tenant_id, "microsoft_calendar", event["id"], subject,
+                    content, event.get("webLink"), organizer, [mailbox],
+                    metadata={"mailbox": mailbox, "start": start_time, "end": end_time, "is_all_day": event.get("isAllDay")},
+                )
+                imported += 1
+    await mark_microsoft_connector_connected(user.tenant_id, "microsoft_calendar", MICROSOFT_MAILBOXES[0])
+    await create_audit_log(user.tenant_id, user.user_id, "CONNECTOR_SYNC", "microsoft_calendar", {"indexed_or_updated": imported})
+    return {"provider": "microsoft_calendar", "indexed_or_updated": imported, "mailboxes": len(MICROSOFT_MAILBOXES)}
+
+
+@app.post("/api/v1/connectors/microsoft/teams/sync", tags=["Connectors"])
+async def sync_microsoft_teams(user: UserContext = Depends(require_roles("admin", "superadmin"))):
+    """Index configured Teams channels and enforce channel membership as document ACL groups."""
+    if not MICROSOFT_TEAM_IDS:
+        raise HTTPException(status_code=503, detail="Set MICROSOFT_TEAM_IDS to comma-separated Entra team IDs")
+    token = await microsoft_graph_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    imported = 0
+    skipped_channels = 0
+    membership_groups_by_email: dict[str, set[str]] = {}
+    configured_team_prefixes = tuple(f"msteams-channel:{team_id}:".lower() for team_id in MICROSOFT_TEAM_IDS)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        for team_id in MICROSOFT_TEAM_IDS:
+            team_          
