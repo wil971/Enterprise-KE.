@@ -490,4 +490,122 @@ def require_roles(*roles: str):
 
 
 # ============================================================================
+# PART 4/10 — TAMPER-EVIDENT AUDIT LOG, BOOTSTRAP, LOGIN AND INVITATIONS
+# ============================================================================
 
+
+async def create_audit_log(
+    tenant_id: str,
+    user_id: Optional[str],
+    action: str,
+    resource: Optional[str],
+    metadata: Optional[dict[str, Any]] = None,
+    ip_address: Optional[str] = None,
+) -> None:
+    """Write a tenant-scoped HMAC-linked audit record; audit failures are logged."""
+    try:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # Serialize each tenant's chain updates on PostgreSQL.
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext(:tenant_id))"),
+                    {"tenant_id": tenant_id},
+                )
+                previous_result = await session.execute(
+                    select(AuditLog.signature)
+                    .where(AuditLog.tenant_id == tenant_id)
+                    .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+                    .limit(1)
+                )
+                previous_signature = previous_result.scalar_one_or_none()
+                timestamp = utc_now()
+                log_id = new_id()
+                safe_metadata = metadata or {}
+                canonical = json.dumps(
+                    {
+                        "id": log_id,
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "action": action,
+                        "resource": resource,
+                        "metadata": safe_metadata,
+                        "ip_address": ip_address,
+                        "timestamp": timestamp.isoformat(),
+                        "previous_signature": previous_signature,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+                signature = hmac.new(
+                    AUDIT_SIGNING_KEY.encode("utf-8"), canonical, hashlib.sha256
+                ).hexdigest()
+                session.add(AuditLog(
+                    id=log_id, tenant_id=tenant_id, user_id=user_id,
+                    action=action[:100], resource=resource, metadata_json=safe_metadata,
+                    ip_address=ip_address, previous_signature=previous_signature,
+                    signature=signature, timestamp=timestamp,
+                ))
+    except Exception as exc:
+        logger.exception("Could not persist audit event action=%s", action)
+        raise RuntimeError("Audit logging failed; the operation could not be fully recorded") from exc
+
+
+async def verify_audit_signature(log: AuditLog) -> bool:
+    canonical = json.dumps(
+        {
+            "id": log.id,
+            "tenant_id": log.tenant_id,
+            "user_id": log.user_id,
+            "action": log.action,
+            "resource": log.resource,
+            "metadata": log.metadata_json or {},
+            "ip_address": log.ip_address,
+            "timestamp": log.timestamp.isoformat(),
+            "previous_signature": log.previous_signature,
+        }, sort_keys=True, separators=(",", ":"), default=str,
+    ).encode("utf-8")
+    expected = hmac.new(AUDIT_SIGNING_KEY.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, log.signature)
+
+
+async def bootstrap_first_tenant(session: AsyncSession) -> None:
+    """Create the first tenant/admin only when explicit Render bootstrap vars exist."""
+    email = env_value("BOOTSTRAP_ADMIN_EMAIL")
+    password = env_value("BOOTSTRAP_ADMIN_PASSWORD")
+    tenant_name = env_value("BOOTSTRAP_TENANT_NAME")
+    if not (email and password and tenant_name):
+        return
+    if len(password) < 12:
+        raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters")
+    existing = await session.execute(select(User.id).limit(1))
+    if existing.scalar_one_or_none():
+        return
+    slug = re.sub(r"[^a-z0-9]+", "-", tenant_name.lower()).strip("-")[:100]
+    tenant_result = await session.execute(select(Tenant).where(Tenant.slug == slug))
+    tenant = tenant_result.scalar_one_or_none()
+    if tenant is None:
+        tenant = Tenant(name=tenant_name, slug=slug)
+        session.add(tenant)
+        await session.flush()
+    admin = User(
+        tenant_id=tenant.id, email=email.lower(), full_name="Platform Owner",
+        password_hash=password_hasher.hash(password), role="superadmin",
+        groups=["tenant:all"], is_active=True, email_verified=True,
+    )
+    session.add(admin)
+    await session.flush()
+
+
+# ----------------------------------------------------------------------------
+# Token encryption for Google refresh tokens (Fernet key derived from JWT key).
+# ----------------------------------------------------------------------------
+from cryptography.fernet import Fernet, InvalidToken
+FERNET_KEY = base64.urlsafe_b64encode(
+    hashlib.sha256(JWT_SECRET_KEY.encode("utf-8") + b"enterprise-connector-token-v1").digest()
+)
+token_cipher = Fernet(FERNET_KEY)
+
+
+# ============================================================================
+            
