@@ -181,3 +181,182 @@ app.add_middleware(
 
 
 # ============================================================================
+# PART 2/10 — RELATIONAL DATA MODEL (ONE SHARED SQLALCHEMY BASE)
+# ============================================================================
+
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+    id = Column(String(36), primary_key=True, default=new_id)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(120), unique=True, nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(320), nullable=False)
+    full_name = Column(String(255), nullable=False, default="")
+    password_hash = Column(String(255), nullable=True)
+    google_subject = Column(String(255), unique=True, nullable=True)
+    role = Column(String(30), nullable=False, default="employee")
+    groups = Column(JSON, nullable=False, default=list)
+    is_active = Column(Boolean, nullable=False, default=True)
+    email_verified = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_users_tenant_email"),)
+
+
+class Invitation(Base):
+    __tablename__ = "invitations"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(320), nullable=False)
+    role = Column(String(30), nullable=False, default="employee")
+    token_hash = Column(String(64), unique=True, nullable=False)
+    invited_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class DocumentRecord(Base):
+    __tablename__ = "documents"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(String(36), nullable=True, index=True)
+    title = Column(String(500), nullable=False)
+    filename = Column(String(500), nullable=True)
+    content = Column(Text, nullable=False, default="")
+    content_hash = Column(String(64), nullable=False)
+    source_app = Column(String(80), nullable=False, default="upload")
+    external_id = Column(String(500), nullable=True)
+    source_url = Column(Text, nullable=True)
+    author_name = Column(String(255), nullable=True)
+    acl_user_ids = Column(JSON, nullable=False, default=list)
+    acl_emails = Column(JSON, nullable=False, default=list)
+    acl_groups = Column(JSON, nullable=False, default=list)
+    status = Column(String(30), nullable=False, default="indexed")
+    metadata_json = Column(JSON, nullable=False, default=dict)
+    uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "source_app", "external_id", name="uq_documents_external_source"),
+        Index("ix_documents_tenant_updated", "tenant_id", "updated_at"),
+    )
+
+
+class DocumentChunk(Base):
+    """Searchable document passages with NVIDIA dense embeddings in Supabase pgvector."""
+    __tablename__ = "document_chunks"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    embedding = Column(VECTOR(2048), nullable=True)
+    embedding_model = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index", name="uq_document_chunk_index"),
+        Index("ix_document_chunks_tenant_document", "tenant_id", "document_id"),
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), nullable=True)
+    action = Column(String(100), nullable=False)
+    resource = Column(String(500), nullable=True)
+    metadata_json = Column(JSON, nullable=False, default=dict)
+    ip_address = Column(String(64), nullable=True)
+    previous_signature = Column(String(64), nullable=True)
+    signature = Column(String(64), nullable=False)
+    timestamp = Column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+
+
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
+    id = Column(String(36), primary_key=True, default=new_id)
+    code = Column(String(80), unique=True, nullable=False)
+    name = Column(String(160), nullable=False)
+    price_kes = Column(Numeric(12, 2), nullable=False)
+    billing_days = Column(Integer, nullable=False, default=30)
+    seats = Column(Integer, nullable=False, default=5)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), unique=True, nullable=False)
+    plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=True)
+    status = Column(String(30), nullable=False, default="inactive")
+    current_period_start = Column(DateTime(timezone=True), nullable=True)
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class PaymentRecord(Base):
+    __tablename__ = "payment_records"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=False)
+    provider = Column(String(40), nullable=False, default="mpesa")
+    phone_number = Column(String(20), nullable=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    currency = Column(String(8), nullable=False, default="KES")
+    status = Column(String(30), nullable=False, default="pending")
+    merchant_request_id = Column(String(120), nullable=True)
+    checkout_request_id = Column(String(120), unique=True, nullable=True)
+    provider_receipt = Column(String(120), unique=True, nullable=True)
+    result_code = Column(String(30), nullable=True)
+    result_description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class ConnectorAccount(Base):
+    __tablename__ = "connector_accounts"
+    id = Column(String(36), primary_key=True, default=new_id)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(80), nullable=False)
+    external_account_id = Column(String(255), nullable=True)
+    encrypted_refresh_token = Column(Text, nullable=True)
+    sync_cursor = Column(Text, nullable=True)
+    status = Column(String(30), nullable=False, default="connected")
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    __table_args__ = (UniqueConstraint("tenant_id", "provider", name="uq_connector_tenant_provider"),)
+
+
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+    id = Column(String(36), primary_key=True, default=new_id)
+    provider = Column(String(80), nullable=False)
+    event_id = Column(String(255), nullable=False)
+    event_type = Column(String(120), nullable=False)
+    payload_json = Column(JSON, nullable=False)
+    processed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    __table_args__ = (UniqueConstraint("provider", "event_id", name="uq_webhook_provider_event"),)
+
+
+# ============================================================================
