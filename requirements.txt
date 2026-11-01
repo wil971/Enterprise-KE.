@@ -1,5 +1,4 @@
 streamlit
-streamlit-oauth
 fastmcp>=4.0,<5
 neo4j>=5.26,<7
 
