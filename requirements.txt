@@ -32,7 +32,6 @@ pwdlib[argon2]
 
 # Enterprise backend + existing Streamlit frontend dependencies
 streamlit>=1.40,<2
-streamlit-oauth>=0.1.14
 
 # FastAPI + MCP
 fastapi>=0.115,<1
