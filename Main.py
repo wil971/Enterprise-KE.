@@ -1670,5 +1670,182 @@ async def mpesa_callback(request: Request):
     await activate_subscription(tenant_id, plan, "mpesa")
 
     return {"ResultCode": 0, "ResultDesc": "Accepted"}
+    # ============================================================
+# PART 9 - CONNECTORS AND FASTMCP
+# ============================================================
+
+class ConnectorDocument(BaseModel):
+    source: str
+    external_id: str
+    title: str
+    content: str
+    url: str = ""
+
+
+@app.post("/api/v1/connectors/ingest")
+async def connector_ingest(
+    data: ConnectorDocument,
+    user: User = Depends(current_user),
+):
+    if user.role not in {"admin", "superadmin"}:
+        raise HTTPException(403, "Administrator access required")
+
+    if len(data.content) > 200000:
+        raise HTTPException(413, "Document content is too large")
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(Document).where(
+                Document.tenant_id == user.tenant_id,
+                Document.source == data.source,
+                Document.external_id == data.external_id,
+            )
+        )
+
+        if existing:
+            existing.title = data.title
+            existing.content = data.content
+            existing.url = data.url
+            existing.updated_at = utc_now()
+            document = existing
+        else:
+            document = Document(
+                id=new_id("doc"),
+                tenant_id=user.tenant_id,
+                title=data.title,
+                source=data.source,
+                external_id=data.external_id,
+                url=data.url,
+                content=data.content,
+                acl_groups=["tenant"],
+                created_by=user.id,
+            )
+            session.add(document)
+
+        await session.commit()
+        await session.refresh(document)
+
+    await index_document_in_graph(document)
+
+    await write_audit(
+        user.tenant_id,
+        user.id,
+        "connector.document.ingested",
+        document.id,
+        {
+            "source": data.source,
+            "external_id": data.external_id,
+        },
+    )
+
+    return {
+        "document_id": document.id,
+        "source": document.source,
+        "status": "indexed",
+    }
+
+
+@app.get("/api/v1/connectors")
+async def connector_status(
+    user: User = Depends(current_user),
+):
+    async with AsyncSessionLocal() as session:
+        sources = await session.execute(
+            select(
+                Document.source,
+            )
+            .where(Document.tenant_id == user.tenant_id)
+            .distinct()
+        )
+
+    return {
+        "connected_sources": [
+            row[0] for row in sources.all()
+        ],
+        "available_integrations": [
+            "google_drive",
+            "microsoft_graph",
+            "slack",
+            "notion",
+        ],
+        "note": (
+            "A source appears as connected only after its "
+            "documents have been ingested."
+        ),
+    }
+
+
+# FastMCP tools use the same application services.
+# They do not bypass tenant authentication.
+
+try:
+    from fastmcp import FastMCP
+
+    mcp = FastMCP("EnterpriseIntelligence")
+
+    @mcp.tool()
+    async def search_enterprise_documents(
+        tenant_id: str,
+        query: str,
+        limit: int = 10,
+    ) -> dict:
+        """Search indexed documents for a tenant."""
+
+        limit = max(1, min(limit, 50))
+
+        async with AsyncSessionLocal() as session:
+            result = await session.scalars(
+                select(Document)
+                .where(
+                    Document.tenant_id == tenant_id,
+                    Document.content.ilike(f"%{query}%")
+                    | Document.title.ilike(f"%{query}%"),
+                )
+                .limit(limit)
+            )
+
+            documents = result.all()
+
+        return {
+            "results": [
+                {
+                    "id": doc.id,
+                    "title": doc.title,
+                    "source": doc.source,
+                    "snippet": doc.content[:500],
+                }
+                for doc in documents
+            ]
+        }
+
+    @mcp.tool()
+    async def get_document(
+        tenant_id: str,
+        document_id: str,
+    ) -> dict:
+        """Retrieve one document belonging to a tenant."""
+
+        async with AsyncSessionLocal() as session:
+            doc = await session.scalar(
+                select(Document).where(
+                    Document.id == document_id,
+                    Document.tenant_id == tenant_id,
+                )
+            )
+
+        if doc is None:
+            return {"error": "Document not found"}
+
+        return {
+            "id": doc.id,
+            "title": doc.title,
+            "content": doc.content,
+            "source": doc.source,
+            "url": doc.url,
+        }
+
+except ImportError:
+    mcp = None
+    logger.warning("FastMCP is unavailable")
 
 
