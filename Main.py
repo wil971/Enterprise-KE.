@@ -739,3 +739,667 @@ async def get_me(user: User = Depends(get_current_user)):
 # END OF PART 3
 # PART 4 GOES DIRECTLY BELOW THIS LINE
 # ============================================================
+# =========================
+# PART 4: AUDIT LOGS & TEAM
+# =========================
+
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
+
+
+class InviteInput(BaseModel):
+    email: EmailStr
+    role: str = "member"
+
+
+class AcceptInviteInput(BaseModel):
+    token: str
+    full_name: str = Field(min_length=2, max_length=120)
+    password: str = Field(min_length=12)
+
+
+async def write_audit(
+    db: AsyncSession,
+    tenant_id: str,
+    user_id: Optional[str],
+    action: str,
+    resource_type: str,
+    resource_id: Optional[str] = None,
+    details: Optional[dict] = None,
+    ip_address: Optional[str] = None,
+):
+    event = AuditEvent(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        details=details or {},
+        ip_address=ip_address,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(event)
+    await db.commit()
+    return event
+
+
+@app.post("/api/v1/team/invitations")
+async def create_invitation(
+    payload: InviteInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    if payload.role not in {"member", "viewer"}:
+        raise HTTPException(400, "Role must be member or viewer.")
+
+    existing = await db.execute(
+        select(User).where(
+            User.tenant_id == user.tenant_id,
+            User.email == payload.email.lower(),
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "This user is already in your organization.")
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    invitation = Invitation(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        email=payload.email.lower(),
+        role=payload.role,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(invitation)
+    await db.commit()
+
+    await write_audit(
+        db, user.tenant_id, user.id,
+        "team.invitation_created", "invitation", invitation.id,
+        {"email": payload.email.lower(), "role": payload.role},
+        request.client.host if request.client else None,
+    )
+
+    # Deliver this token through a verified email service before production.
+    return {
+        "invitation_id": invitation.id,
+        "email": invitation.email,
+        "expires_at": invitation.expires_at,
+        "invitation_token": raw_token,
+        "delivery_status": "token_created_email_delivery_not_configured",
+    }
+
+
+@app.post("/api/v1/team/invitations/accept")
+async def accept_invitation(
+    payload: AcceptInviteInput,
+    db: AsyncSession = Depends(get_db),
+):
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+
+    result = await db.execute(
+        select(Invitation).where(Invitation.token_hash == token_hash)
+    )
+    invitation = result.scalar_one_or_none()
+
+    if not invitation:
+        raise HTTPException(404, "Invitation is invalid.")
+
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if invitation.accepted_at is not None or expires_at < now:
+        raise HTTPException(400, "Invitation has expired or was already used.")
+
+    existing = await db.execute(
+        select(User).where(
+            User.tenant_id == invitation.tenant_id,
+            User.email == invitation.email,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "User already exists in this organization.")
+
+    new_user = User(
+        id=str(uuid.uuid4()),
+        tenant_id=invitation.tenant_id,
+        email=invitation.email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name,
+        role=invitation.role,
+        is_active=True,
+        created_at=now,
+    )
+    invitation.accepted_at = now
+    db.add(new_user)
+    await db.commit()
+
+    await write_audit(
+        db, invitation.tenant_id, new_user.id,
+        "team.invitation_accepted", "user", new_user.id,
+        {"email": new_user.email},
+    )
+
+    return {"message": "Invitation accepted.", "user_id": new_user.id}
+
+
+@app.get("/api/v1/team")
+async def list_team(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    result = await db.execute(
+        select(User)
+        .where(User.tenant_id == user.tenant_id)
+        .order_by(User.created_at.desc())
+    )
+    members = result.scalars().all()
+
+    return [
+        {
+            "id": member.id,
+            "email": member.email,
+            "full_name": member.full_name,
+            "role": member.role,
+            "is_active": member.is_active,
+            "created_at": member.created_at,
+        }
+        for member in members
+    ]
+
+
+@app.get("/api/v1/audit")
+async def get_audit_events(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    limit = max(1, min(limit, 500))
+
+    result = await db.execute(
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == user.tenant_id)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(limit)
+    )
+
+    return [
+        {
+            "id": event.id,
+            "user_id": event.user_id,
+            "action": event.action,
+            "resource_type": event.resource_type,
+            "resource_id": event.resource_id,
+            "details": event.details,
+            "ip_address": event.ip_address,
+            "created_at": event.created_at,
+        }
+        for event in result.scalars().all()
+    ]# =========================
+# PART 5: DOCUMENT INGESTION
+# =========================
+
+import hashlib
+from pathlib import Path
+
+
+def extract_document_text(filename: str, content: bytes) -> str:
+    suffix = Path(filename).suffix.lower()
+
+    if suffix == ".txt":
+        return content.decode("utf-8", errors="replace")
+
+    if suffix == ".pdf":
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+    if suffix == ".docx":
+        document = DocxDocument(io.BytesIO(content))
+        return "\n".join(p.text for p in document.paragraphs if p.text.strip())
+
+    raise HTTPException(
+        415,
+        "Unsupported file type. Upload PDF, DOCX, or TXT.",
+    )
+
+
+def split_text(text_value: str, chunk_size: int = 1200, overlap: int = 150):
+    text_value = re.sub(r"\s+", " ", text_value).strip()
+    if not text_value:
+        return []
+
+    chunks = []
+    start = 0
+
+    while start < len(text_value):
+        end = min(start + chunk_size, len(text_value))
+        chunks.append(text_value[start:end])
+
+        if end == len(text_value):
+            break
+
+        start = max(0, end - overlap)
+
+    return chunks
+
+
+async def index_document_in_graph(
+    document_id: str,
+    tenant_id: str,
+    filename: str,
+    chunks: list[str],
+):
+    async with neo4j_driver.session(database=NEO4J_DATABASE) as session:
+        await session.run(
+            """
+            MERGE (d:Document {id: $document_id, tenant_id: $tenant_id})
+            SET d.filename = $filename,
+                d.created_at = datetime()
+            """,
+            document_id=document_id,
+            tenant_id=tenant_id,
+            filename=filename,
+        )
+
+        for index, chunk in enumerate(chunks):
+            chunk_id = f"{document_id}:{index}"
+
+            await session.run(
+                """
+                MATCH (d:Document {id: $document_id, tenant_id: $tenant_id})
+                MERGE (c:DocumentChunk {
+                    id: $chunk_id,
+                    tenant_id: $tenant_id
+                })
+                SET c.text = $chunk_text,
+                    c.chunk_index = $chunk_index
+                MERGE (d)-[:HAS_CHUNK]->(c)
+                """,
+                document_id=document_id,
+                tenant_id=tenant_id,
+                chunk_id=chunk_id,
+                chunk_text=chunk,
+                chunk_index=index,
+            )
+
+
+@app.post("/api/v1/documents/upload")
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File exceeds the upload size limit.")
+
+    filename = Path(file.filename or "uploaded.txt").name
+    extracted_text = extract_document_text(filename, content)
+
+    if not extracted_text.strip():
+        raise HTTPException(422, "No readable text was extracted.")
+
+    document_id = str(uuid.uuid4())
+    text_hash = hashlib.sha256(extracted_text.encode("utf-8")).hexdigest()
+    chunks = split_text(extracted_text)
+
+    document = Document(
+        id=document_id,
+        tenant_id=user.tenant_id,
+        uploaded_by=user.id,
+        filename=filename,
+        content_type=file.content_type or "application/octet-stream",
+        source="upload",
+        extracted_text=extracted_text,
+        text_hash=text_hash,
+        acl_groups=[],
+        created_at=datetime.now(timezone.utc),
+    )
+
+    db.add(document)
+    await db.commit()
+
+    try:
+        await index_document_in_graph(
+            document_id,
+            user.tenant_id,
+            filename,
+            chunks,
+        )
+    except Exception:
+        await db.delete(document)
+        await db.commit()
+        logging.exception("Neo4j indexing failed for document %s", document_id)
+        raise HTTPException(503, "Document indexing failed. Please retry.")
+
+    await write_audit(
+        db, user.tenant_id, user.id,
+        "document.uploaded", "document", document_id,
+        {"filename": filename, "chunk_count": len(chunks)},
+        request.client.host if request.client else None,
+    )
+
+    return {
+        "document_id": document_id,
+        "filename": filename,
+        "characters_extracted": len(extracted_text),
+        "chunks_indexed": len(chunks),
+        "status": "indexed",
+    }
+
+
+@app.get("/api/v1/documents")
+async def list_documents(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    limit = max(1, min(limit, 500))
+
+    result = await db.execute(
+        select(Document)
+        .where(Document.tenant_id == user.tenant_id)
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+    )
+
+    return [
+        {
+            "id": doc.id,
+            "filename": doc.filename,
+            "source": doc.source,
+            "created_at": doc.created_at,
+        }
+        for doc in result.scalars().all()
+    ]
+
+
+@app.get("/api/v1/documents/{document_id}")
+async def get_document(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.tenant_id == user.tenant_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(404, "Document not found.")
+
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "source": doc.source,
+        "text": doc.extracted_text,
+        "created_at": doc.created_at,
+    }# =========================
+# PART 6: SEARCH & GRAPH
+# =========================
+
+class SearchInput(BaseModel):
+    query: str = Field(min_length=2, max_length=1000)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+@app.post("/api/v1/search")
+async def search_documents(
+    payload: SearchInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    terms = [term.strip() for term in payload.query.split() if term.strip()]
+    conditions = [
+        Document.extracted_text.ilike(f"%{term}%")
+        for term in terms
+    ]
+
+    result = await db.execute(
+        select(Document)
+        .where(
+            Document.tenant_id == user.tenant_id,
+            *conditions,
+        )
+        .order_by(Document.created_at.desc())
+        .limit(payload.limit)
+    )
+
+    documents = result.scalars().all()
+
+    await write_audit(
+        db, user.tenant_id, user.id,
+        "search.executed", "document", None,
+        {"query": payload.query, "result_count": len(documents)},
+        request.client.host if request.client else None,
+    )
+
+    return {
+        "query": payload.query,
+        "count": len(documents),
+        "results": [
+            {
+                "document_id": doc.id,
+                "filename": doc.filename,
+                "source": doc.source,
+                "snippet": (
+                    doc.extracted_text[:500]
+                    if doc.extracted_text else ""
+                ),
+                "created_at": doc.created_at,
+            }
+            for doc in documents
+        ],
+        "search_method": "tenant_scoped_keyword_search",
+    }
+
+
+@app.get("/api/v1/graph/documents")
+async def graph_documents(
+    user: User = Depends(get_current_user),
+):
+    async with neo4j_driver.session(database=NEO4J_DATABASE) as session:
+        result = await session.run(
+            """
+            MATCH (d:Document {tenant_id: $tenant_id})
+            OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:DocumentChunk {
+                tenant_id: $tenant_id
+            })
+            RETURN d.id AS id,
+                   d.filename AS filename,
+                   count(c) AS chunk_count
+            ORDER BY filename
+            """,
+            tenant_id=user.tenant_id,
+        )
+        records = await result.data()
+
+    return {"nodes": records}
+
+
+@app.get("/api/v1/graph/explore/{document_id}")
+async def explore_document_graph(
+    document_id: str,
+    depth: int = 1,
+    user: User = Depends(get_current_user),
+):
+    # Limit traversal to document/chunk nodes in this tenant.
+    depth = max(1, min(depth, 2))
+
+    cypher = f"""
+    MATCH (d:Document {{
+        id: $document_id,
+        tenant_id: $tenant_id
+    }})
+    OPTIONAL MATCH path =
+        (d)-[:HAS_CHUNK*1..{depth}]-(related)
+    WHERE all(
+        node IN nodes(path)
+        WHERE node.tenant_id = $tenant_id
+    )
+    RETURN d.id AS document_id,
+           d.filename AS filename,
+           collect(DISTINCT {{
+               id: related.id,
+               labels: labels(related),
+               filename: related.filename,
+               chunk_index: related.chunk_index
+           }}) AS related_nodes
+    """
+
+    async with neo4j_driver.session(database=NEO4J_DATABASE) as session:
+        result = await session.run(
+            cypher,
+            document_id=document_id,
+            tenant_id=user.tenant_id,
+        )
+        record = await result.single()
+
+    if not record:
+        raise HTTPException(404, "Document not found in this workspace.")
+
+    related_nodes = [
+        node for node in record["related_nodes"]
+        if node.get("id") is not None
+    ]
+
+    return {
+        "document_id": record["document_id"],
+        "filename": record["filename"],
+        "related_nodes": related_nodes,
+    }# =========================
+# PART 7: GLOBAL PRICING
+# =========================
+
+SUPPORTED_CURRENCIES = {
+    "USD", "EUR", "GBP", "KES", "CAD", "AUD", "CHF", "AED", "SGD"
+}
+
+ENTERPRISE_PLANS = {
+    "growth": {
+        "name": "Enterprise GraphRAG Growth",
+        "monthly_price": 2000,
+        "annual_price": 21600,
+        "implementation_fee": 3500,
+        "included_users": 25,
+        "included_documents": 25000,
+        "support": "Business-hours support",
+        "deployment": "Managed cloud",
+    },
+    "business": {
+        "name": "Enterprise GraphRAG Business",
+        "monthly_price": 5000,
+        "annual_price": 54000,
+        "implementation_fee": 10000,
+        "included_users": 100,
+        "included_documents": 100000,
+        "support": "Priority support",
+        "deployment": "Managed cloud or agreed private environment",
+    },
+    "enterprise": {
+        "name": "Enterprise GraphRAG Enterprise",
+        "monthly_price": 10000,
+        "annual_price": 108000,
+        "implementation_fee": 25000,
+        "included_users": 250,
+        "included_documents": 500000,
+        "support": "Dedicated enterprise support",
+        "deployment": "Custom enterprise deployment",
+    },
+}
+
+
+class SubscriptionRequest(BaseModel):
+    plan: str
+    billing_period: str = "monthly"
+    currency: str = "USD"
+
+
+@app.get("/api/v1/pricing")
+async def get_pricing():
+    return {
+        "reference_currency": "USD",
+        "plans": ENTERPRISE_PLANS,
+        "note": (
+            "Prices are proposed reference prices. Final quotations, "
+            "taxes and contract currency are agreed with each customer."
+        ),
+    }
+
+
+@app.post("/api/v1/subscriptions/request")
+async def request_subscription(
+    payload: SubscriptionRequest,
+    user: User = Depends(require_admin),
+):
+    plan = payload.plan.lower()
+    currency = payload.currency.upper()
+
+    if plan not in ENTERPRISE_PLANS:
+        raise HTTPException(400, "Unknown subscription plan.")
+
+    if payload.billing_period not in {"monthly", "annual"}:
+        raise HTTPException(400, "Billing period must be monthly or annual.")
+
+    if currency not in SUPPORTED_CURRENCIES:
+        raise HTTPException(400, "Unsupported quotation currency.")
+
+    details = ENTERPRISE_PLANS[plan]
+    amount = (
+        details["monthly_price"]
+        if payload.billing_period == "monthly"
+        else details["annual_price"]
+    )
+
+    return {
+        "tenant_id": user.tenant_id,
+        "plan": plan,
+        "billing_period": payload.billing_period,
+        "reference_amount": amount,
+        "reference_currency": "USD",
+        "requested_quote_currency": currency,
+        "requires_final_quote": currency != "USD",
+        "implementation_fee": details["implementation_fee"],
+        "message": "Subscription request prepared; payment is not yet taken.",
+    }
+
+
+@app.get("/api/v1/subscriptions/current")
+async def current_subscription(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.tenant_id == user.tenant_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        return {"subscription": None}
+
+    return {
+        "id": subscription.id,
+        "plan": subscription.plan,
+        "status": subscription.status,
+        "starts_at": subscription.starts_at,
+        "ends_at": subscription.ends_at,
+    }
