@@ -493,3 +493,177 @@ class Payment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
+# ============================================================
+# PART 3 - SCHEMAS AND AUTHENTICATION
+# ============================================================
+
+class RegisterInput(BaseModel):
+    organization: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=200)
+
+
+class LoginInput(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class InviteInput(BaseModel):
+    email: EmailStr
+    role: str = "employee"
+
+
+class AcceptInviteInput(BaseModel):
+    token: str
+    password: str = Field(min_length=12, max_length=200)
+
+
+class SearchInput(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=50)
+
+
+def create_access_token(user: User) -> str:
+    now = utc_now()
+    return jwt.encode(
+        {
+            "sub": user.id,
+            "tenant_id": user.tenant_id,
+            "role": user.role,
+            "iat": now,
+            "exp": now + timedelta(
+                minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+            ),
+        },
+        JWT_SECRET_KEY,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
+async def current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(
+        security_scheme
+    ),
+) -> User:
+    if credentials is None:
+        raise HTTPException(401, "Authentication required")
+
+    try:
+        claims = jwt.decode(
+            credentials.credentials,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid or expired token")
+
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, claims.get("sub"))
+
+        if (
+            user is None
+            or not user.active
+            or user.tenant_id != claims.get("tenant_id")
+        ):
+            raise HTTPException(401, "Account is unavailable")
+
+        return user
+
+
+def admin_only(user: User):
+    if user.role not in {"admin", "superadmin"}:
+        raise HTTPException(403, "Administrator access required")
+
+
+@app.post("/api/v1/auth/register")
+async def register(data: RegisterInput):
+    email = data.email.lower()
+    slug = data.organization.lower().strip().replace(" ", "-")
+    slug = "".join(c for c in slug if c.isalnum() or c == "-")
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(User).where(User.email == email)
+        )
+        if existing:
+            raise HTTPException(409, "Email already registered")
+
+        organization = Organization(
+            id=new_id("org"),
+            name=data.organization,
+            slug=f"{slug}-{uuid.uuid4().hex[:6]}",
+        )
+        session.add(organization)
+        await session.flush()
+
+        user = User(
+            id=new_id("usr"),
+            email=email,
+            password_hash=hash_password(data.password),
+            tenant_id=organization.id,
+            role="admin",
+        )
+        session.add(user)
+
+        session.add(Subscription(
+            id=new_id("sub"),
+            tenant_id=organization.id,
+            plan="trial",
+            status="trial",
+            current_period_end=utc_now() + timedelta(days=14),
+        ))
+
+        await session.commit()
+
+        return {
+            "access_token": create_access_token(user),
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "tenant_id": user.tenant_id,
+                "role": user.role,
+            },
+        }
+
+
+@app.post("/api/v1/auth/login")
+async def login(data: LoginInput):
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(
+            select(User).where(
+                User.email == data.email.lower()
+            )
+        )
+
+        if (
+            user is None
+            or not user.active
+            or not verify_password(
+                data.password,
+                user.password_hash,
+            )
+        ):
+            raise HTTPException(401, "Incorrect email or password")
+
+        return {
+            "access_token": create_access_token(user),
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "tenant_id": user.tenant_id,
+                "role": user.role,
+            },
+        }
+
+
+@app.get("/api/v1/auth/me")
+async def who_am_i(user: User = Depends(current_user)):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "tenant_id": user.tenant_id,
+        "role": user.role,
+            }
