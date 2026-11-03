@@ -1231,3 +1231,122 @@ async def explore_graph(
         "nodes": list(nodes.values()),
         "edges": edges,
     }
+    # ============================================================
+# PART 7 - SUBSCRIPTIONS AND PLANS
+# ============================================================
+
+PLANS = {
+    "starter": {
+        "name": "Starter",
+        "monthly_price_kes": 14900,
+        "max_documents": 2500,
+    },
+    "growth": {
+        "name": "Growth",
+        "monthly_price_kes": 44900,
+        "max_documents": 15000,
+    },
+    "scale": {
+        "name": "Scale",
+        "monthly_price_kes": 119900,
+        "max_documents": 75000,
+    },
+    "enterprise": {
+        "name": "Enterprise",
+        "monthly_price_kes": None,
+        "max_documents": None,
+    },
+}
+
+
+@app.get("/api/v1/billing/plans")
+async def available_plans():
+    return {"plans": PLANS}
+
+
+@app.get("/api/v1/billing/subscription")
+async def current_subscription(
+    user: User = Depends(current_user),
+):
+    async with AsyncSessionLocal() as session:
+        subscription = await session.scalar(
+            select(Subscription).where(
+                Subscription.tenant_id == user.tenant_id
+            )
+        )
+
+    if subscription is None:
+        return {
+            "plan": "trial",
+            "status": "trial",
+            "current_period_end": None,
+        }
+
+    return {
+        "plan": subscription.plan,
+        "status": subscription.status,
+        "provider": subscription.provider,
+        "current_period_end": (
+            subscription.current_period_end.isoformat()
+            if subscription.current_period_end
+            else None
+        ),
+    }
+
+
+@app.get("/api/v1/billing/payments")
+async def payment_history(
+    user: User = Depends(current_user),
+):
+    async with AsyncSessionLocal() as session:
+        records = await session.scalars(
+            select(Payment)
+            .where(Payment.tenant_id == user.tenant_id)
+            .order_by(Payment.created_at.desc())
+            .limit(50)
+        )
+
+    return [
+        {
+            "id": payment.id,
+            "provider": payment.provider,
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "plan": payment.plan,
+            "status": payment.status,
+            "created_at": payment.created_at.isoformat(),
+        }
+        for payment in records.all()
+    ]
+
+
+async def activate_subscription(
+    tenant_id: str,
+    plan: str,
+    provider: str,
+):
+    async with AsyncSessionLocal() as session:
+        subscription = await session.scalar(
+            select(Subscription).where(
+                Subscription.tenant_id == tenant_id
+            )
+        )
+
+        if subscription is None:
+            subscription = Subscription(
+                id=new_id("sub"),
+                tenant_id=tenant_id,
+            )
+            session.add(subscription)
+
+        subscription.plan = plan
+        subscription.status = "active"
+        subscription.provider = provider
+        subscription.current_period_end = (
+            utc_now() + timedelta(days=30)
+        )
+        subscription.updated_at = utc_now()
+
+        await session.commit()
+
+
