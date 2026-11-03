@@ -1402,4 +1402,201 @@ async def current_subscription(
         "status": subscription.status,
         "starts_at": subscription.starts_at,
         "ends_at": subscription.ends_at,
+    }# =========================
+# PART 8: PAYMENT RECORDS
+# =========================
+
+class PaymentRequest(BaseModel):
+    plan: str
+    billing_period: str = "monthly"
+    include_implementation: bool = False
+
+
+class PaymentVerificationInput(BaseModel):
+    verified_amount: int = Field(gt=0)
+    verification_note: str = Field(min_length=5, max_length=1000)
+
+
+@app.post("/api/v1/payments/request")
+async def create_payment_request(
+    payload: PaymentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    plan = payload.plan.lower()
+
+    if plan not in ENTERPRISE_PLANS:
+        raise HTTPException(400, "Unknown plan.")
+
+    if payload.billing_period not in {"monthly", "annual"}:
+        raise HTTPException(400, "Invalid billing period.")
+
+    plan_details = ENTERPRISE_PLANS[plan]
+
+    amount = (
+        plan_details["monthly_price"]
+        if payload.billing_period == "monthly"
+        else plan_details["annual_price"]
+    )
+
+    if payload.include_implementation:
+        amount += plan_details["implementation_fee"]
+
+    payment = Payment(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        provider="manual_pending",
+        provider_reference=str(uuid.uuid4()),
+        amount=amount,
+        currency="USD",
+        status="pending",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    db.add(payment)
+    await db.commit()
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "payment.requested",
+        "payment",
+        payment.id,
+        {
+            "plan": plan,
+            "billing_period": payload.billing_period,
+            "include_implementation": payload.include_implementation,
+            "amount": amount,
+            "currency": "USD",
+        },
+    )
+
+    return {
+        "payment_id": payment.id,
+        "reference": payment.provider_reference,
+        "amount": amount,
+        "currency": "USD",
+        "status": "pending",
+        "message": "Payment request created. No payment has been processed.",
+    }
+
+
+@app.get("/api/v1/payments")
+async def list_payments(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    result = await db.execute(
+        select(Payment)
+        .where(Payment.tenant_id == user.tenant_id)
+        .order_by(Payment.created_at.desc())
+    )
+
+    return [
+        {
+            "id": payment.id,
+            "provider": payment.provider,
+            "reference": payment.provider_reference,
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "status": payment.status,
+            "created_at": payment.created_at,
+        }
+        for payment in result.scalars().all()
+    ]
+
+
+@app.post("/api/v1/admin/payments/{payment_id}/verify")
+async def verify_payment_manually(
+    payment_id: str,
+    payload: PaymentVerificationInput,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    result = await db.execute(
+        select(Payment).where(
+            Payment.id == payment_id,
+            Payment.tenant_id == user.tenant_id,
+        )
+    )
+    payment = result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(404, "Payment not found.")
+
+    if payment.status != "pending":
+        raise HTTPException(409, "Payment is not pending.")
+
+    if payment.amount != payload.verified_amount:
+        raise HTTPException(400, "Verified amount does not match the invoice.")
+
+    audit_result = await db.execute(
+        select(AuditEvent).where(
+            AuditEvent.tenant_id == user.tenant_id,
+            AuditEvent.resource_type == "payment",
+            AuditEvent.resource_id == payment.id,
+            AuditEvent.action == "payment.requested",
+        ).order_by(AuditEvent.created_at.desc()).limit(1)
+    )
+    audit_event = audit_result.scalar_one_or_none()
+
+    if not audit_event:
+        raise HTTPException(400, "Payment request details were not found.")
+
+    details = audit_event.details or {}
+    plan = details.get("plan")
+    billing_period = details.get("billing_period")
+
+    if plan not in ENTERPRISE_PLANS or billing_period not in {"monthly", "annual"}:
+        raise HTTPException(400, "Invalid subscription details.")
+
+    now = datetime.now(timezone.utc)
+    duration_days = 365 if billing_period == "annual" else 30
+
+    payment.status = "confirmed"
+
+    subscription_result = await db.execute(
+        select(Subscription)
+        .where(Subscription.tenant_id == user.tenant_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    subscription = subscription_result.scalar_one_or_none()
+
+    if subscription:
+        subscription.plan = plan
+        subscription.status = "active"
+        subscription.starts_at = now
+        subscription.ends_at = now + timedelta(days=duration_days)
+    else:
+        subscription = Subscription(
+            id=str(uuid.uuid4()),
+            tenant_id=user.tenant_id,
+            plan=plan,
+            status="active",
+            starts_at=now,
+            ends_at=now + timedelta(days=duration_days),
+            created_at=now,
+        )
+        db.add(subscription)
+
+    await db.commit()
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "payment.manually_verified",
+        "payment",
+        payment.id,
+        {"verification_note": payload.verification_note},
+    )
+
+    return {
+        "message": "Payment recorded and subscription activated.",
+        "payment_id": payment.id,
+        "subscription_plan": plan,
+        "subscription_status": "active",
+        "verification_method": "manual_admin_verification",
     }
