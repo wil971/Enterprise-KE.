@@ -1349,4 +1349,326 @@ async def activate_subscription(
 
         await session.commit()
 
+# ============================================================
+# PART 8 - PAYPAL AND M-PESA
+# ============================================================
+
+PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
+PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
+PAYPAL_MODE = os.getenv("PAYPAL_MODE", "sandbox").lower()
+
+PAYPAL_API = (
+    "https://api-m.paypal.com"
+    if PAYPAL_MODE == "live"
+    else "https://api-m.sandbox.paypal.com"
+)
+
+MPESA_CONSUMER_KEY = os.getenv("MPESA_CONSUMER_KEY", "")
+MPESA_CONSUMER_SECRET = os.getenv("MPESA_CONSUMER_SECRET", "")
+MPESA_SHORTCODE = os.getenv("MPESA_SHORTCODE", "")
+MPESA_PASSKEY = os.getenv("MPESA_PASSKEY", "")
+MPESA_CALLBACK_URL = os.getenv("MPESA_CALLBACK_URL", "")
+MPESA_ENV = os.getenv("MPESA_ENV", "sandbox").lower()
+
+MPESA_API = (
+    "https://api.safaricom.co.ke"
+    if MPESA_ENV == "production"
+    else "https://sandbox.safaricom.co.ke"
+)
+
+
+async def paypal_token():
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        raise HTTPException(503, "PayPal is not configured")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{PAYPAL_API}/v1/oauth2/token",
+            auth=(PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET),
+            data={"grant_type": "client_credentials"},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(502, "PayPal authentication failed")
+
+    return response.json()["access_token"]
+
+
+@app.post("/api/v1/payments/paypal/create")
+async def paypal_create(
+    plan: str,
+    user: User = Depends(current_user),
+):
+    if plan not in {"starter", "growth", "scale"}:
+        raise HTTPException(400, "Invalid paid plan")
+
+    amount = PLANS[plan]["monthly_price_kes"]
+    # PayPal checkout uses USD. Configure a real USD price per plan.
+    usd_prices = {
+        "starter": os.getenv("STARTER_PRICE_USD", ""),
+        "growth": os.getenv("GROWTH_PRICE_USD", ""),
+        "scale": os.getenv("SCALE_PRICE_USD", ""),
+    }
+
+    try:
+        usd_amount = float(usd_prices[plan])
+        if usd_amount <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(503, "USD plan price is not configured")
+
+    token = await paypal_token()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{PAYPAL_API}/v2/checkout/orders",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "intent": "CAPTURE",
+                "purchase_units": [{
+                    "reference_id": user.tenant_id,
+                    "custom_id": f"{user.tenant_id}:{plan}",
+                    "amount": {
+                        "currency_code": "USD",
+                        "value": f"{usd_amount:.2f}",
+                    },
+                }],
+                "application_context": {
+                    "return_url": f"{FRONTEND_URL}/billing/success",
+                    "cancel_url": f"{FRONTEND_URL}/billing/cancel",
+                },
+            },
+        )
+
+    if response.status_code >= 300:
+        raise HTTPException(502, "PayPal order creation failed")
+
+    order = response.json()
+
+    async with AsyncSessionLocal() as session:
+        session.add(Payment(
+            id=new_id("pay"),
+            tenant_id=user.tenant_id,
+            provider="paypal",
+            provider_reference=order["id"],
+            amount=int(usd_amount * 100),
+            currency="USD",
+            plan=plan,
+            status="pending",
+        ))
+        await session.commit()
+
+    approval = next(
+        (
+            link["href"]
+            for link in order.get("links", [])
+            if link.get("rel") == "approve"
+        ),
+        None,
+    )
+
+    return {
+        "order_id": order["id"],
+        "approval_url": approval,
+    }
+
+
+@app.post("/api/v1/payments/paypal/capture")
+async def paypal_capture(
+    order_id: str,
+    user: User = Depends(current_user),
+):
+    token = await paypal_token()
+
+    async with AsyncSessionLocal() as session:
+        payment = await session.scalar(
+            select(Payment).where(
+                Payment.provider == "paypal",
+                Payment.provider_reference == order_id,
+                Payment.tenant_id == user.tenant_id,
+            )
+        )
+
+        if payment is None:
+            raise HTTPException(404, "Payment not found")
+
+        if payment.status == "completed":
+            return {"status": "completed"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{PAYPAL_API}/v2/checkout/orders/{order_id}/capture",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    if response.status_code >= 300:
+        raise HTTPException(502, "PayPal capture failed")
+
+    capture_data = response.json()
+    if capture_data.get("status") != "COMPLETED":
+        raise HTTPException(402, "PayPal payment is not completed")
+
+    async with AsyncSessionLocal() as session:
+        payment = await session.scalar(
+            select(Payment).where(
+                Payment.provider_reference == order_id,
+                Payment.tenant_id == user.tenant_id,
+            )
+        )
+        payment.status = "completed"
+        await session.commit()
+
+    await activate_subscription(
+        user.tenant_id,
+        payment.plan,
+        "paypal",
+    )
+
+    await write_audit(
+        user.tenant_id,
+        user.id,
+        "payment.completed",
+        order_id,
+        {"provider": "paypal", "plan": payment.plan},
+    )
+
+    return {"status": "completed", "plan": payment.plan}
+
+
+async def mpesa_token():
+    if not MPESA_CONSUMER_KEY or not MPESA_CONSUMER_SECRET:
+        raise HTTPException(503, "M-Pesa is not configured")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            f"{MPESA_API}/oauth/v1/generate"
+            "?grant_type=client_credentials",
+            auth=(MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET),
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(502, "M-Pesa authentication failed")
+
+    return response.json()["access_token"]
+
+
+@app.post("/api/v1/payments/mpesa/stk")
+async def mpesa_stk(
+    phone: str,
+    plan: str,
+    user: User = Depends(current_user),
+):
+    if plan not in {"starter", "growth", "scale"}:
+        raise HTTPException(400, "Invalid paid plan")
+
+    if not MPESA_SHORTCODE or not MPESA_PASSKEY or not MPESA_CALLBACK_URL:
+        raise HTTPException(503, "M-Pesa STK configuration is incomplete")
+
+    normalized = phone.replace("+", "").replace(" ", "")
+    if normalized.startswith("0"):
+        normalized = "254" + normalized[1:]
+    if not normalized.startswith("254") or len(normalized) != 12:
+        raise HTTPException(400, "Use a valid Kenyan phone number")
+
+    amount = PLANS[plan]["monthly_price_kes"]
+    token = await mpesa_token()
+    timestamp = utc_now().strftime("%Y%m%d%H%M%S")
+
+    import base64
+    password = base64.b64encode(
+        f"{MPESA_SHORTCODE}{MPESA_PASSKEY}{timestamp}".encode()
+    ).decode()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{MPESA_API}/mpesa/stkpush/v1/processrequest",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "BusinessShortCode": MPESA_SHORTCODE,
+                "Password": password,
+                "Timestamp": timestamp,
+                "TransactionType": "CustomerPayBillOnline",
+                "Amount": amount,
+                "PartyA": normalized,
+                "PartyB": MPESA_SHORTCODE,
+                "PhoneNumber": normalized,
+                "CallBackURL": MPESA_CALLBACK_URL,
+                "AccountReference": user.tenant_id[:12],
+                "TransactionDesc": f"{plan} subscription",
+            },
+        )
+
+    if response.status_code >= 300:
+        raise HTTPException(502, "M-Pesa request failed")
+
+    result = response.json()
+
+    if result.get("ResponseCode") != "0":
+        raise HTTPException(502, "M-Pesa did not accept the request")
+
+    async with AsyncSessionLocal() as session:
+        session.add(Payment(
+            id=new_id("pay"),
+            tenant_id=user.tenant_id,
+            provider="mpesa",
+            provider_reference=result["CheckoutRequestID"],
+            amount=amount,
+            currency="KES",
+            plan=plan,
+            status="pending",
+        ))
+        await session.commit()
+
+    return {
+        "status": "pending",
+        "checkout_request_id": result["CheckoutRequestID"],
+        "message": "Check your phone to complete the M-Pesa payment.",
+    }
+
+
+@app.post("/api/v1/payments/mpesa/callback")
+async def mpesa_callback(request: Request):
+    payload = await request.json()
+    callback = payload.get("Body", {}).get("stkCallback", {})
+
+    checkout_id = callback.get("CheckoutRequestID")
+    result_code = callback.get("ResultCode")
+
+    if not checkout_id:
+        raise HTTPException(400, "Missing checkout reference")
+
+    async with AsyncSessionLocal() as session:
+        payment = await session.scalar(
+            select(Payment).where(
+                Payment.provider == "mpesa",
+                Payment.provider_reference == checkout_id,
+            )
+        )
+
+        if payment is None:
+            raise HTTPException(404, "Payment not found")
+
+        if payment.status == "completed":
+            return {"ResultCode": 0, "ResultDesc": "Already processed"}
+
+        if result_code == 0:
+            payment.status = "completed"
+            await session.commit()
+            tenant_id = payment.tenant_id
+            plan = payment.plan
+        else:
+            payment.status = "failed"
+            await session.commit()
+            return {"ResultCode": 0, "ResultDesc": "Payment recorded"}
+
+    await activate_subscription(tenant_id, plan, "mpesa")
+
+    return {"ResultCode": 0, "ResultDesc": "Accepted"}
+
 
