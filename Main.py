@@ -667,3 +667,179 @@ async def who_am_i(user: User = Depends(current_user)):
         "tenant_id": user.tenant_id,
         "role": user.role,
             }
+    # ============================================================
+# PART 4 - AUDIT LOGGING AND INVITATIONS
+# ============================================================
+
+async def write_audit(
+    tenant_id: str,
+    user_id: str,
+    action: str,
+    resource: str,
+    details: dict | None = None,
+):
+    async with AsyncSessionLocal() as session:
+        session.add(AuditEvent(
+            id=new_id("audit"),
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action=action,
+            resource=resource,
+            details=details or {},
+        ))
+        await session.commit()
+
+
+@app.post("/api/v1/team/invitations")
+async def create_invitation(
+    data: InviteInput,
+    user: User = Depends(current_user),
+):
+    admin_only(user)
+
+    if data.role not in {"employee", "admin"}:
+        raise HTTPException(400, "Invalid invitation role")
+
+    raw_token = secrets.token_urlsafe(40)
+    token_hash = hashlib.sha256(
+        raw_token.encode()
+    ).hexdigest()
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(User).where(
+                User.email == data.email.lower()
+            )
+        )
+        if existing:
+            raise HTTPException(409, "This email already has an account")
+
+        invitation = Invitation(
+            id=new_id("invite"),
+            email=data.email.lower(),
+            tenant_id=user.tenant_id,
+            role=data.role,
+            token_hash=token_hash,
+            expires_at=utc_now() + timedelta(days=3),
+        )
+
+        session.add(invitation)
+        await session.commit()
+
+    await write_audit(
+        user.tenant_id,
+        user.id,
+        "team.invitation.created",
+        data.email.lower(),
+        {"role": data.role},
+    )
+
+    return {
+        "invitation_token": raw_token,
+        "expires_at": invitation.expires_at.isoformat(),
+        "message": "Send this invitation token securely to the invited employee.",
+    }
+
+
+@app.post("/api/v1/team/invitations/accept")
+async def accept_invitation(data: AcceptInviteInput):
+    token_hash = hashlib.sha256(
+        data.token.encode()
+    ).hexdigest()
+
+    async with AsyncSessionLocal() as session:
+        invitation = await session.scalar(
+            select(Invitation).where(
+                Invitation.token_hash == token_hash
+            )
+        )
+
+        if (
+            invitation is None
+            or invitation.accepted_at is not None
+            or invitation.expires_at <= utc_now()
+        ):
+            raise HTTPException(400, "Invitation is invalid or expired")
+
+        existing = await session.scalar(
+            select(User).where(
+                User.email == invitation.email
+            )
+        )
+        if existing:
+            raise HTTPException(409, "Account already exists")
+
+        employee = User(
+            id=new_id("usr"),
+            email=invitation.email,
+            password_hash=hash_password(data.password),
+            tenant_id=invitation.tenant_id,
+            role=invitation.role,
+        )
+
+        invitation.accepted_at = utc_now()
+        session.add(employee)
+        await session.commit()
+
+        await write_audit(
+            employee.tenant_id,
+            employee.id,
+            "team.invitation.accepted",
+            employee.email,
+        )
+
+        return {
+            "message": "Invitation accepted",
+            "access_token": create_access_token(employee),
+            "token_type": "bearer",
+        }
+
+
+@app.get("/api/v1/team")
+async def list_team(user: User = Depends(current_user)):
+    admin_only(user)
+
+    async with AsyncSessionLocal() as session:
+        result = await session.scalars(
+            select(User).where(
+                User.tenant_id == user.tenant_id
+            )
+        )
+        return [
+            {
+                "id": item.id,
+                "email": item.email,
+                "role": item.role,
+                "active": item.active,
+            }
+            for item in result.all()
+        ]
+
+
+@app.get("/api/v1/audit")
+async def list_audit(
+    limit: int = 50,
+    user: User = Depends(current_user),
+):
+    admin_only(user)
+    limit = max(1, min(limit, 200))
+
+    async with AsyncSessionLocal() as session:
+        result = await session.scalars(
+            select(AuditEvent)
+            .where(AuditEvent.tenant_id == user.tenant_id)
+            .order_by(AuditEvent.created_at.desc())
+            .limit(limit)
+        )
+
+        return [
+            {
+                "id": item.id,
+                "user_id": item.user_id,
+                "action": item.action,
+                "resource": item.resource,
+                "details": item.details,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in result.all()
+        ]
