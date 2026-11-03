@@ -356,3 +356,140 @@ async def detailed_health():
 # END OF PART 1
 # PART 2 CONTINUES IN THIS SAME FILE
 # ============================================================
+# ============================================================
+# PART 2 - DATABASE MODELS
+# ============================================================
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(
+        String(200), unique=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(
+        String(320), unique=True, index=True, nullable=False
+    )
+    password_hash: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), index=True
+    )
+    role: Mapped[str] = mapped_column(
+        String(30), default="employee"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class Invitation(Base):
+    __tablename__ = "invitations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(30), default="employee")
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True)
+    )
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(500))
+    source: Mapped[str] = mapped_column(String(100))
+    external_id: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True
+    )
+    url: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+    content: Mapped[str] = mapped_column(Text)
+    acl_groups: Mapped[list] = mapped_column(
+        JSON, default=lambda: ["tenant"]
+    )
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(100))
+    resource: Mapped[str] = mapped_column(String(500))
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), unique=True
+    )
+    plan: Mapped[str] = mapped_column(String(40), default="trial")
+    status: Mapped[str] = mapped_column(String(30), default="trial")
+    provider: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True
+    )
+    current_period_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    provider: Mapped[str] = mapped_column(String(30))
+    provider_reference: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    amount: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3))
+    plan: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
