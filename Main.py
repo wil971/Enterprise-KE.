@@ -1015,3 +1015,219 @@ async def list_documents(
             }
             for item in result.all()
         ]
+        # ============================================================
+# PART 6 - ENTERPRISE SEARCH
+# ============================================================
+
+@app.post("/api/v1/search")
+async def enterprise_search(
+    data: SearchInput,
+    user: User = Depends(current_user),
+):
+    offset = (data.page - 1) * data.page_size
+
+    async with AsyncSessionLocal() as session:
+        result = await session.scalars(
+            select(Document)
+            .where(
+                Document.tenant_id == user.tenant_id,
+                Document.content.ilike(f"%{data.query}%")
+                | Document.title.ilike(f"%{data.query}%"),
+            )
+            .order_by(Document.updated_at.desc())
+            .offset(offset)
+            .limit(data.page_size)
+        )
+
+        documents = result.all()
+
+    results = [
+        {
+            "id": item.id,
+            "title": item.title,
+            "source": item.source,
+            "snippet": item.content[:500],
+            "url": item.url,
+            "created_at": item.created_at.isoformat(),
+            "evidence": "PostgreSQL document record",
+        }
+        for item in documents
+    ]
+
+    await write_audit(
+        user.tenant_id,
+        user.id,
+        "search.executed",
+        "enterprise_search",
+        {"query": data.query},
+    )
+
+    return {
+        "query": data.query,
+        "page": data.page,
+        "page_size": data.page_size,
+        "count": len(results),
+        "results": results,
+    }
+
+
+@app.get("/api/v1/graph/document/{document_id}")
+async def document_relationships(
+    document_id: str,
+    user: User = Depends(current_user),
+):
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+        result = await session.run(
+            """
+            MATCH (d:Document {
+                id: $document_id,
+                tenant_id: $tenant_id
+            })
+            OPTIONAL MATCH (d)-[r]-(related)
+            WHERE related.tenant_id = $tenant_id
+            RETURN d {
+                .id, .title, .source
+            } AS document,
+            collect({
+                relationship: type(r),
+                entity: properties(related),
+                labels: labels(related)
+            }) AS relationships
+            """,
+            document_id=document_id,
+            tenant_id=user.tenant_id,
+        )
+
+        record = await result.single()
+
+    if not record or not record["document"]:
+        raise HTTPException(404, "Document not found")
+
+    return {
+        "document": record["document"],
+        "relationships": [
+            item
+            for item in record["relationships"]
+            if item["entity"] is not None
+        ],
+    }
+
+
+@app.post("/api/v1/graph/entities")
+async def create_graph_entity(
+    name: str,
+    entity_type: str,
+    document_id: str,
+    user: User = Depends(current_user),
+):
+    if len(name) > 300 or len(entity_type) > 80:
+        raise HTTPException(400, "Entity information is too long")
+
+    async with AsyncSessionLocal() as session:
+        document = await session.scalar(
+            select(Document).where(
+                Document.id == document_id,
+                Document.tenant_id == user.tenant_id,
+            )
+        )
+
+    if document is None:
+        raise HTTPException(404, "Document not found")
+
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+        await session.run(
+            """
+            MATCH (d:Document {
+                id: $document_id,
+                tenant_id: $tenant_id
+            })
+            MERGE (e:Entity {
+                tenant_id: $tenant_id,
+                name: $name,
+                entity_type: $entity_type
+            })
+            MERGE (d)-[:MENTIONS]->(e)
+            """,
+            document_id=document_id,
+            tenant_id=user.tenant_id,
+            name=name,
+            entity_type=entity_type,
+        )
+
+    await write_audit(
+        user.tenant_id,
+        user.id,
+        "graph.entity.created",
+        name,
+        {"type": entity_type, "document_id": document_id},
+    )
+
+    return {
+        "status": "created",
+        "entity": name,
+        "type": entity_type,
+    }
+
+
+@app.get("/api/v1/graph/explore")
+async def explore_graph(
+    query: str,
+    depth: int = 2,
+    user: User = Depends(current_user),
+):
+    depth = max(1, min(depth, 4))
+
+    cypher = f"""
+    MATCH (start)
+    WHERE start.tenant_id = $tenant_id
+      AND (
+        toLower(coalesce(start.name, '')) CONTAINS toLower($query)
+        OR toLower(coalesce(start.title, '')) CONTAINS toLower($query)
+      )
+    MATCH path = (start)-[*1..{depth}]-(related)
+    WHERE all(n IN nodes(path)
+              WHERE n.tenant_id = $tenant_id)
+    RETURN path
+    LIMIT 100
+    """
+
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+        result = await session.run(
+            cypher,
+            tenant_id=user.tenant_id,
+            query=query,
+        )
+
+        records = await result.data()
+
+    nodes = {}
+    edges = []
+
+    for record in records:
+        path = record["path"]
+
+        for node in path.nodes:
+            node_id = node.element_id
+            nodes[node_id] = {
+                "id": node_id,
+                "labels": list(node.labels),
+                "properties": dict(node),
+            }
+
+        for relationship in path.relationships:
+            edges.append({
+                "source": relationship.start_node.element_id,
+                "target": relationship.end_node.element_id,
+                "type": relationship.type,
+            })
+
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges,
+    }
