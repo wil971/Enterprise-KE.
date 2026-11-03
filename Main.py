@@ -1599,4 +1599,352 @@ async def verify_payment_manually(
         "subscription_plan": plan,
         "subscription_status": "active",
         "verification_method": "manual_admin_verification",
+    }# =========================
+# PART 9: CONNECTOR INGESTION
+# =========================
+
+class ConnectorDocumentInput(BaseModel):
+    connector: str = Field(min_length=2, max_length=50)
+    external_id: str = Field(min_length=1, max_length=500)
+    filename: str = Field(min_length=1, max_length=255)
+    content: str = Field(min_length=1)
+
+
+SUPPORTED_CONNECTORS = {
+    "google_drive": "Google Drive",
+    "sharepoint": "Microsoft SharePoint",
+    "onedrive": "Microsoft OneDrive",
+    "slack": "Slack",
+    "notion": "Notion",
+    "confluence": "Atlassian Confluence",
+    "salesforce": "Salesforce",
+    "hubspot": "HubSpot",
+    "custom": "Custom connector",
+}
+
+
+@app.get("/api/v1/connectors")
+async def list_connectors(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Document.source)
+        .where(Document.tenant_id == user.tenant_id)
+        .distinct()
+    )
+    active_sources = set(result.scalars().all())
+
+    return {
+        "connectors": [
+            {
+                "id": connector_id,
+                "name": connector_name,
+                "status": (
+                    "data_received"
+                    if connector_id in active_sources
+                    else "not_connected"
+                ),
+            }
+            for connector_id, connector_name in SUPPORTED_CONNECTORS.items()
+        ],
+        "note": (
+            "Provider OAuth, scheduled synchronization and webhook "
+            "subscriptions must be configured separately."
+        ),
+    }
+
+
+@app.post("/api/v1/connectors/ingest")
+async def ingest_connector_document(
+    payload: ConnectorDocumentInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    connector_id = payload.connector.lower()
+
+    if connector_id not in SUPPORTED_CONNECTORS:
+        raise HTTPException(400, "Unsupported connector.")
+
+    content_hash = hashlib.sha256(
+        payload.content.encode("utf-8")
+    ).hexdigest()
+
+    # Avoid ingesting the same content repeatedly.
+    duplicate_result = await db.execute(
+        select(Document).where(
+            Document.tenant_id == user.tenant_id,
+            Document.source == connector_id,
+            Document.text_hash == content_hash,
+        ).limit(1)
+    )
+    duplicate = duplicate_result.scalar_one_or_none()
+
+    if duplicate:
+        return {
+            "status": "already_ingested",
+            "document_id": duplicate.id,
+            "filename": duplicate.filename,
+        }
+
+    document_id = str(uuid.uuid4())
+    chunks = split_text(payload.content)
+
+    document = Document(
+        id=document_id,
+        tenant_id=user.tenant_id,
+        uploaded_by=user.id,
+        filename=Path(payload.filename).name,
+        content_type="text/plain",
+        source=connector_id,
+        extracted_text=payload.content,
+        text_hash=content_hash,
+        acl_groups=[],
+        created_at=datetime.now(timezone.utc),
+    )
+
+    db.add(document)
+    await db.commit()
+
+    try:
+        await index_document_in_graph(
+            document_id=document_id,
+            tenant_id=user.tenant_id,
+            filename=document.filename,
+            chunks=chunks,
+        )
+    except Exception:
+        await db.delete(document)
+        await db.commit()
+        logging.exception("Connector indexing failed.")
+        raise HTTPException(503, "Connector document indexing failed.")
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "connector.document_ingested",
+        "document",
+        document_id,
+        {
+            "connector": connector_id,
+            "external_id": payload.external_id,
+            "filename": document.filename,
+            "chunk_count": len(chunks),
+        },
+        request.client.host if request.client else None,
+    )
+
+    return {
+        "status": "ingested",
+        "document_id": document_id,
+        "connector": connector_id,
+        "filename": document.filename,
+        "chunks_indexed": len(chunks),
+        }# =========================
+# PART 10: DASHBOARD & STATUS
+# =========================
+
+@app.get("/api/v1/dashboard")
+async def get_dashboard(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    document_result = await db.execute(
+        select(func.count(Document.id)).where(
+            Document.tenant_id == user.tenant_id
+        )
+    )
+
+    user_result = await db.execute(
+        select(func.count(User.id)).where(
+            User.tenant_id == user.tenant_id
+        )
+    )
+
+    audit_result = await db.execute(
+        select(func.count(AuditEvent.id)).where(
+            AuditEvent.tenant_id == user.tenant_id
+        )
+    )
+
+    payment_result = await db.execute(
+        select(func.count(Payment.id)).where(
+            Payment.tenant_id == user.tenant_id,
+            Payment.status == "confirmed",
+        )
+    )
+
+    return {
+        "tenant_id": user.tenant_id,
+        "metrics": {
+            "documents": document_result.scalar_one(),
+            "team_members": user_result.scalar_one(),
+            "audit_events": audit_result.scalar_one(),
+            "confirmed_payments": payment_result.scalar_one(),
+        },
+        "generated_at": datetime.now(timezone.utc),
+    }
+
+
+@app.get("/api/v1/usage")
+async def get_usage(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    document_result = await db.execute(
+        select(func.count(Document.id)).where(
+            Document.tenant_id == user.tenant_id
+        )
+    )
+
+    user_result = await db.execute(
+        select(func.count(User.id)).where(
+            User.tenant_id == user.tenant_id
+        )
+    )
+
+    subscription_result = await db.execute(
+        select(Subscription)
+        .where(Subscription.tenant_id == user.tenant_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    subscription = subscription_result.scalar_one_or_none()
+
+    plan_name = subscription.plan if subscription else "unsubscribed"
+    plan = ENTERPRISE_PLANS.get(plan_name)
+
+    return {
+        "plan": plan_name,
+        "usage": {
+            "documents": document_result.scalar_one(),
+            "team_members": user_result.scalar_one(),
+        },
+        "allowances": (
+            {
+                "documents": plan["included_documents"],
+                "team_members": plan["included_users"],
+            }
+            if plan else None
+        ),
+        "metering_status": {
+            "ai_tokens": "not_metered",
+            "embedding_storage": "not_metered",
+            "graph_storage": "not_metered",
+            "connector_api_calls": "not_metered",
+        },
+        "note": (
+            "Do not charge usage overages until the corresponding "
+            "metering and billing controls have been implemented."
+        ),
+    }
+
+
+@app.get("/api/v1/platform")
+async def platform_information():
+    return {
+        "name": "Enterprise GraphRAG",
+        "description": (
+            "Multi-tenant enterprise document ingestion, "
+            "knowledge graph indexing and secure context retrieval."
+        ),
+        "api_version": "v1",
+        "capabilities": {
+            "authentication": "implemented",
+            "tenant_scoped_documents": "implemented",
+            "audit_events": "implemented",
+            "document_upload": "implemented",
+            "keyword_search": "implemented",
+            "neo4j_document_graph": "implemented",
+            "connector_content_ingestion": "implemented",
+            "subscription_records": "implemented",
+            "payment_records": "manual_verification_only",
+            "provider_oauth_connectors": "not_implemented",
+            "vector_search": "not_implemented",
+            "llm_answer_generation": "not_implemented",
+            "automated_payment_webhooks": "not_implemented",
+            "full_fastmcp_server": "not_implemented",
+        },
+    }
+
+
+@app.get("/api/v1/mcp/tools")
+async def mcp_tool_manifest(
+    user: User = Depends(get_current_user),
+):
+    return {
+        "server_name": "EnterpriseKnowledgeHub",
+        "status": "tool_manifest_only",
+        "tools": [
+            {
+                "name": "search_enterprise_documents",
+                "description": (
+                    "Search documents belonging to the authenticated tenant."
+                ),
+                "endpoint": "POST /api/v1/search",
+            },
+            {
+                "name": "list_enterprise_documents",
+                "description": (
+                    "List documents belonging to the authenticated tenant."
+                ),
+                "endpoint": "GET /api/v1/documents",
+            },
+            {
+                "name": "explore_knowledge_graph",
+                "description": (
+                    "Explore the authenticated tenant's document graph."
+                ),
+                "endpoint": "GET /api/v1/graph/explore/{document_id}",
+            },
+        ],
+        "security": (
+            "The API authenticates the user and derives tenant scope "
+            "from the authenticated account."
+        ),
+        "note": (
+            "This endpoint describes available tools. It is not itself "
+            "a running MCP protocol server."
+        ),
+    }
+
+
+@app.get("/api/v1/system/status")
+async def system_status(
+    user: User = Depends(require_admin),
+):
+    status = {
+        "api": "online",
+        "postgresql": "unknown",
+        "neo4j": "unknown",
+    }
+
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(select(1))
+        status["postgresql"] = "online"
+    except Exception:
+        logging.exception("PostgreSQL health check failed.")
+        status["postgresql"] = "offline"
+
+    try:
+        await neo4j_driver.verify_connectivity()
+        status["neo4j"] = "online"
+    except Exception:
+        logging.exception("Neo4j health check failed.")
+        status["neo4j"] = "offline"
+
+    overall = (
+        "healthy"
+        if status["postgresql"] == "online"
+        and status["neo4j"] == "online"
+        else "degraded"
+    )
+
+    return {
+        "overall_status": overall,
+        "services": status,
+        "checked_at": datetime.now(timezone.utc),
     }
