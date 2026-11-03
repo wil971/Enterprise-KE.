@@ -843,3 +843,175 @@ async def list_audit(
             }
             for item in result.all()
         ]
+# ============================================================
+# PART 5 - DOCUMENT INGESTION
+# ============================================================
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+def extract_document_text(
+    filename: str,
+    content: bytes,
+) -> str:
+    suffix = filename.lower().rsplit(".", 1)[-1]
+
+    if suffix == "txt":
+        return content.decode("utf-8", errors="replace")
+
+    if suffix == "pdf":
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join(
+            page.extract_text() or ""
+            for page in reader.pages
+        )
+
+    if suffix == "docx":
+        document = DocxDocument(io.BytesIO(content))
+        return "\n".join(
+            paragraph.text
+            for paragraph in document.paragraphs
+        )
+
+    raise HTTPException(
+        415,
+        "Supported document formats: PDF, DOCX and TXT",
+    )
+
+
+def split_text(text: str, size: int = 1200):
+    words = text.split()
+    chunks = []
+
+    current = []
+    current_length = 0
+
+    for word in words:
+        if current_length + len(word) + 1 > size and current:
+            chunks.append(" ".join(current))
+            current = []
+            current_length = 0
+
+        current.append(word)
+        current_length += len(word) + 1
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return chunks
+
+
+async def index_document_in_graph(
+    document: Document,
+):
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+        await session.run(
+            """
+            MERGE (d:Document {
+                id: $id,
+                tenant_id: $tenant_id
+            })
+            SET d.title = $title,
+                d.source = $source,
+                d.url = $url,
+                d.content = $content,
+                d.acl_groups = $acl_groups,
+                d.updated_at = $updated_at
+            """,
+            id=document.id,
+            tenant_id=document.tenant_id,
+            title=document.title,
+            source=document.source,
+            url=document.url or "",
+            content=document.content,
+            acl_groups=["tenant"],
+            updated_at=utc_now().isoformat(),
+        )
+
+
+@app.post("/api/v1/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    user: User = Depends(current_user),
+):
+    if user.role not in {"employee", "admin", "superadmin"}:
+        raise HTTPException(403, "Document upload not permitted")
+
+    filename = file.filename or "document"
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File exceeds the 25 MB upload limit")
+
+    extracted = extract_document_text(filename, content)
+
+    if not extracted.strip():
+        raise HTTPException(422, "No readable text was found")
+
+    document = Document(
+        id=new_id("doc"),
+        tenant_id=user.tenant_id,
+        title=filename,
+        source="upload",
+        content=extracted,
+        acl_groups=["tenant"],
+        created_by=user.id,
+    )
+
+    async with AsyncSessionLocal() as session:
+        session.add(document)
+        await session.commit()
+
+    try:
+        await index_document_in_graph(document)
+    except Exception:
+        logger.exception("Neo4j document indexing failed")
+        async with AsyncSessionLocal() as session:
+            await session.delete(
+                await session.get(Document, document.id)
+            )
+            await session.commit()
+        raise HTTPException(
+            503,
+            "Document was not indexed. Please retry later."
+        )
+
+    await write_audit(
+        user.tenant_id,
+        user.id,
+        "document.uploaded",
+        document.id,
+        {"filename": filename},
+    )
+
+    return {
+        "id": document.id,
+        "title": document.title,
+        "status": "indexed",
+        "chunks": len(split_text(extracted)),
+    }
+
+
+@app.get("/api/v1/documents")
+async def list_documents(
+    user: User = Depends(current_user),
+):
+    async with AsyncSessionLocal() as session:
+        result = await session.scalars(
+            select(Document)
+            .where(Document.tenant_id == user.tenant_id)
+            .order_by(Document.created_at.desc())
+            .limit(100)
+        )
+
+        return [
+            {
+                "id": item.id,
+                "title": item.title,
+                "source": item.source,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in result.all()
+        ]
