@@ -537,7 +537,10 @@ async def current_user_profile(
         "email": user.email,
         "full_name": user.full_name,
         "role": user.role,
-    }async def write_audit(
+        }
+
+
+async def write_audit(
     db: AsyncSession,
     tenant_id: str,
     user_id: Optional[str],
