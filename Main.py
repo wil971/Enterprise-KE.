@@ -317,4 +317,425 @@ class Payment(Base):
     status: Mapped[str] = mapped_column(String(30), default="pending")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
+    )def hash_password(password: str) -> str:
+    if len(password) < 12:
+        raise ValueError("Password must have at least 12 characters.")
+
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(
+        password.encode(),
+        salt=salt,
+        n=2**14,
+        r=8,
+        p=1,
     )
+    return f"{salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, expected_hash = stored_hash.split("$", 1)
+
+        actual_hash = hashlib.scrypt(
+            password.encode(),
+            salt=bytes.fromhex(salt_hex),
+            n=2**14,
+            r=8,
+            p=1,
+        ).hex()
+
+        return hmac.compare_digest(actual_hash, expected_hash)
+
+    except (ValueError, TypeError):
+        return False
+
+
+def create_access_token(
+    user_id: str,
+    tenant_id: str,
+    role: str,
+) -> str:
+    now = utc_now()
+
+    return jwt.encode(
+        {
+            "sub": user_id,
+            "tenant_id": tenant_id,
+            "role": role,
+            "iat": now,
+            "exp": now + timedelta(minutes=TOKEN_EXPIRE_MINUTES),
+        },
+        JWT_SECRET_KEY,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    if not credentials:
+        raise HTTPException(401, "Authentication required.")
+
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+        )
+
+        user_id = payload.get("sub")
+        tenant_id = payload.get("tenant_id")
+
+        if not user_id or not tenant_id:
+            raise HTTPException(401, "Invalid token.")
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Session expired.")
+
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token.")
+
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.tenant_id == tenant_id,
+            User.is_active.is_(True),
+        )
+    )
+
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(401, "User not found or inactive.")
+
+    return user
+
+
+async def require_admin(
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(403, "Administrator access required.")
+
+    return user
+
+
+class RegisterInput(BaseModel):
+    organization_name: str = Field(min_length=2, max_length=200)
+    full_name: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginInput(BaseModel):
+    email: EmailStr
+    password: str
+
+
+@app.post("/api/v1/auth/register")
+async def register(
+    payload: RegisterInput,
+    db: AsyncSession = Depends(get_db),
+):
+    email = payload.email.lower().strip()
+
+    existing = await db.execute(
+        select(User).where(User.email == email)
+    )
+
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "Email already registered.")
+
+    organization = Organization(
+        name=payload.organization_name.strip()
+    )
+
+    db.add(organization)
+    await db.flush()
+
+    user = User(
+        tenant_id=organization.id,
+        email=email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name.strip(),
+        role="admin",
+    )
+
+    db.add(user)
+
+    db.add(
+        Subscription(
+            tenant_id=organization.id,
+            plan="free",
+            status="trial",
+            ends_at=utc_now() + timedelta(days=14),
+        )
+    )
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "access_token": create_access_token(
+            user.id, user.tenant_id, user.role
+        ),
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "tenant_id": user.tenant_id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+        },
+    }
+
+
+@app.post("/api/v1/auth/login")
+async def login(
+    payload: LoginInput,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(User).where(
+            User.email == payload.email.lower().strip()
+        )
+    )
+
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(
+        payload.password, user.password_hash
+    ):
+        raise HTTPException(401, "Invalid email or password.")
+
+    if not user.is_active:
+        raise HTTPException(403, "Account inactive.")
+
+    return {
+        "access_token": create_access_token(
+            user.id, user.tenant_id, user.role
+        ),
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "tenant_id": user.tenant_id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+        },
+    }
+
+
+@app.get("/api/v1/auth/me")
+async def current_user_profile(
+    user: User = Depends(get_current_user),
+):
+    return {
+        "id": user.id,
+        "tenant_id": user.tenant_id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+    }async def write_audit(
+    db: AsyncSession,
+    tenant_id: str,
+    user_id: Optional[str],
+    action: str,
+    resource_type: str,
+    resource_id: str = "",
+    details: Optional[dict] = None,
+    ip_address: str = "",
+):
+    event = AuditEvent(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        details=details or {},
+        ip_address=ip_address,
+    )
+
+    db.add(event)
+    await db.commit()
+    return event
+
+
+class InviteInput(BaseModel):
+    email: EmailStr
+    role: str = "member"
+
+
+@app.post("/api/v1/team/invitations")
+async def create_invitation(
+    payload: InviteInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    email = payload.email.lower().strip()
+
+    if payload.role not in {"member", "viewer"}:
+        raise HTTPException(400, "Invalid role.")
+
+    existing = await db.execute(
+        select(User).where(
+            User.tenant_id == user.tenant_id,
+            User.email == email,
+        )
+    )
+
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "User already exists.")
+
+    raw_token = secrets.token_urlsafe(32)
+
+    from datetime import timedelta
+
+    invitation = Invitation(
+        tenant_id=user.tenant_id,
+        email=email,
+        role=payload.role,
+        token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+        expires_at=utc_now() + timedelta(days=7),
+    )
+
+    db.add(invitation)
+    await db.commit()
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "team.invitation_created",
+        "invitation",
+        invitation.id,
+        {"email": email, "role": payload.role},
+        request.client.host if request.client else "",
+    )
+
+    return {
+        "invitation_id": invitation.id,
+        "invitation_token": raw_token,
+        "email": email,
+        "expires_at": invitation.expires_at,
+        "email_delivery": "not_configured",
+    }
+
+
+class AcceptInviteInput(BaseModel):
+    token: str
+    full_name: str = Field(min_length=2, max_length=120)
+    password: str = Field(min_length=12, max_length=128)
+
+
+@app.post("/api/v1/team/invitations/accept")
+async def accept_invitation(
+    payload: AcceptInviteInput,
+    db: AsyncSession = Depends(get_db),
+):
+    token_hash = hashlib.sha256(
+        payload.token.encode()
+    ).hexdigest()
+
+    result = await db.execute(
+        select(Invitation).where(
+            Invitation.token_hash == token_hash
+        )
+    )
+
+    invitation = result.scalar_one_or_none()
+
+    if not invitation:
+        raise HTTPException(404, "Invitation not found.")
+
+    expiry = invitation.expires_at
+
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+
+    if invitation.accepted_at or expiry < utc_now():
+        raise HTTPException(400, "Invitation expired or already used.")
+
+    existing = await db.execute(
+        select(User).where(
+            User.tenant_id == invitation.tenant_id,
+            User.email == invitation.email,
+        )
+    )
+
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "User already exists.")
+
+    new_user = User(
+        tenant_id=invitation.tenant_id,
+        email=invitation.email,
+        full_name=payload.full_name,
+        password_hash=hash_password(payload.password),
+        role=invitation.role,
+    )
+
+    invitation.accepted_at = utc_now()
+
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    return {
+        "message": "Invitation accepted.",
+        "user_id": new_user.id,
+    }
+
+
+@app.get("/api/v1/team")
+async def list_team(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    result = await db.execute(
+        select(User)
+        .where(User.tenant_id == user.tenant_id)
+        .order_by(User.created_at.desc())
+    )
+
+    return [
+        {
+            "id": member.id,
+            "email": member.email,
+            "full_name": member.full_name,
+            "role": member.role,
+            "is_active": member.is_active,
+            "created_at": member.created_at,
+        }
+        for member in result.scalars().all()
+    ]
+
+
+@app.get("/api/v1/audit")
+async def get_audit_logs(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    limit = max(1, min(limit, 500))
+
+    result = await db.execute(
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == user.tenant_id)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(limit)
+    )
+
+    return [
+        {
+            "id": event.id,
+            "user_id": event.user_id,
+            "action": event.action,
+            "resource_type": event.resource_type,
+            "resource_id": event.resource_id,
+            "details": event.details,
+            "created_at": event.created_at,
+        }
+        for event in result.scalars().all()
+    ]
