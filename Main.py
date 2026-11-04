@@ -738,8 +738,10 @@ async def get_audit_logs(
             "created_at": event.created_at,
         }
         for event in result.scalars().all()
-               ]def extract_document_text(filename: str, content: bytes) -> str:
-    extension = Path(filename).suffix.lower()
+                   ]
+
+
+def extract_document_text(filename: str, content: bytes) -> str:
 
     if extension == ".txt":
         return content.decode("utf-8", errors="replace")
