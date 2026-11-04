@@ -320,7 +320,10 @@ class Payment(Base):
     status: Mapped[str] = mapped_column(String(30), default="pending")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
-        )def hash_password(password: str) -> str:
+    )
+
+
+def hash_password(password: str) -> str:
     if len(password) < 12:
         raise ValueError("Password must have at least 12 characters.")
 
@@ -332,7 +335,7 @@ class Payment(Base):
         r=8,
         p=1,
     )
-    return f"{salt.hex()}${digest.hex()}"
+    return salt.hex() + ":" + digest.hex()
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
