@@ -1110,7 +1110,7 @@ async def explore_document_graph(
     return {
         "document_id": record["document_id"],
         "filename": record["filename"],
-        "chunks": [
+        "chunks": {
             chunk for chunk in record["chunks"]
             if chunk.get("id")
             }
