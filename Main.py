@@ -1209,7 +1209,10 @@ async def get_current_subscription(
         "status": subscription.status,
         "starts_at": subscription.starts_at,
         "ends_at": subscription.ends_at,
-    }class PaymentRequest(BaseModel):
+        }
+
+
+class PaymentRequest(BaseModel):
     plan: str
     billing_period: str = "monthly"
     include_implementation: bool = False
