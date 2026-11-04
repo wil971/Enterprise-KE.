@@ -738,4 +738,369 @@ async def get_audit_logs(
             "created_at": event.created_at,
         }
         for event in result.scalars().all()
-               ]
+               ]def extract_document_text(filename: str, content: bytes) -> str:
+    extension = Path(filename).suffix.lower()
+
+    if extension == ".txt":
+        return content.decode("utf-8", errors="replace")
+
+    if extension == ".pdf":
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join(
+            page.extract_text() or "" for page in reader.pages
+        )
+
+    if extension == ".docx":
+        document = DocxDocument(io.BytesIO(content))
+        return "\n".join(
+            paragraph.text
+            for paragraph in document.paragraphs
+            if paragraph.text.strip()
+        )
+
+    if extension == ".csv":
+        return content.decode("utf-8", errors="replace")
+
+    raise HTTPException(
+        415,
+        "Supported formats: PDF, DOCX, TXT and CSV.",
+    )
+
+
+def split_text(
+    text_value: str,
+    chunk_size: int = 1200,
+    overlap: int = 150,
+):
+    text_value = re.sub(r"\s+", " ", text_value).strip()
+
+    if not text_value:
+        return []
+
+    chunks = []
+    start = 0
+
+    while start < len(text_value):
+        end = min(start + chunk_size, len(text_value))
+        chunks.append(text_value[start:end])
+
+        if end >= len(text_value):
+            break
+
+        start = end - overlap
+
+    return chunks
+
+
+async def index_document_in_graph(
+    document_id: str,
+    tenant_id: str,
+    filename: str,
+    chunks: list[str],
+):
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+
+        await session.run(
+            """
+            MERGE (d:Document {
+                id: $document_id,
+                tenant_id: $tenant_id
+            })
+            SET d.filename = $filename,
+                d.created_at = datetime()
+            """,
+            document_id=document_id,
+            tenant_id=tenant_id,
+            filename=filename,
+        )
+
+        for index, chunk in enumerate(chunks):
+            await session.run(
+                """
+                MATCH (d:Document {
+                    id: $document_id,
+                    tenant_id: $tenant_id
+                })
+                MERGE (c:DocumentChunk {
+                    id: $chunk_id,
+                    tenant_id: $tenant_id
+                })
+                SET c.text = $chunk_text,
+                    c.chunk_index = $chunk_index
+                MERGE (d)-[:HAS_CHUNK]->(c)
+                """,
+                document_id=document_id,
+                tenant_id=tenant_id,
+                chunk_id=f"{document_id}:{index}",
+                chunk_text=chunk,
+                chunk_index=index,
+            )
+
+
+@app.post("/api/v1/documents/upload")
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File exceeds upload size limit.")
+
+    filename = Path(file.filename or "document.txt").name
+    extracted_text = extract_document_text(filename, content)
+
+    if not extracted_text.strip():
+        raise HTTPException(422, "No readable text extracted.")
+
+    document_id = str(uuid.uuid4())
+    text_hash = hashlib.sha256(
+        extracted_text.encode()
+    ).hexdigest()
+
+    chunks = split_text(extracted_text)
+
+    document = Document(
+        id=document_id,
+        tenant_id=user.tenant_id,
+        uploaded_by=user.id,
+        filename=filename,
+        content_type=file.content_type or "",
+        source="upload",
+        extracted_text=extracted_text,
+        text_hash=text_hash,
+    )
+
+    db.add(document)
+    await db.commit()
+
+    try:
+        await index_document_in_graph(
+            document_id,
+            user.tenant_id,
+            filename,
+            chunks,
+        )
+
+    except Exception:
+        logger.exception("Neo4j indexing failed.")
+
+        await db.delete(document)
+        await db.commit()
+
+        raise HTTPException(
+            503,
+            "Graph indexing failed. Please retry.",
+        )
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "document.uploaded",
+        "document",
+        document_id,
+        {
+            "filename": filename,
+            "chunks": len(chunks),
+        },
+        request.client.host if request.client else "",
+    )
+
+    return {
+        "document_id": document_id,
+        "filename": filename,
+        "characters_extracted": len(extracted_text),
+        "chunks_indexed": len(chunks),
+        "status": "indexed",
+    }
+
+
+@app.get("/api/v1/documents")
+async def list_documents(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    limit = max(1, min(limit, 500))
+
+    result = await db.execute(
+        select(Document)
+        .where(Document.tenant_id == user.tenant_id)
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+    )
+
+    return [
+        {
+            "id": document.id,
+            "filename": document.filename,
+            "source": document.source,
+            "created_at": document.created_at,
+        }
+        for document in result.scalars().all()
+    ]
+
+
+@app.get("/api/v1/documents/{document_id}")
+async def get_document(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.tenant_id == user.tenant_id,
+        )
+    )
+
+    document = result.scalar_one_or_none()
+
+    if not document:
+        raise HTTPException(404, "Document not found.")
+
+    return {
+        "id": document.id,
+        "filename": document.filename,
+        "source": document.source,
+        "text": document.extracted_text,
+        "created_at": document.created_at,
+    }class SearchInput(BaseModel):
+    query: str = Field(min_length=2, max_length=1000)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+@app.post("/api/v1/search")
+async def search_documents(
+    payload: SearchInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    terms = [
+        term.strip()
+        for term in payload.query.split()
+        if term.strip()
+    ]
+
+    conditions = [
+        Document.extracted_text.ilike(f"%{term}%")
+        for term in terms
+    ]
+
+    result = await db.execute(
+        select(Document)
+        .where(
+            Document.tenant_id == user.tenant_id,
+            *conditions,
+        )
+        .order_by(Document.created_at.desc())
+        .limit(payload.limit)
+    )
+
+    documents = result.scalars().all()
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "search.executed",
+        "document",
+        details={
+            "query": payload.query,
+            "result_count": len(documents),
+        },
+        ip_address=request.client.host if request.client else "",
+    )
+
+    return {
+        "query": payload.query,
+        "count": len(documents),
+        "search_type": "keyword",
+        "results": [
+            {
+                "document_id": document.id,
+                "filename": document.filename,
+                "snippet": document.extracted_text[:500],
+                "source": document.source,
+            }
+            for document in documents
+        ],
+    }
+
+
+@app.get("/api/v1/graph/documents")
+async def get_graph_documents(
+    user: User = Depends(get_current_user),
+):
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+
+        result = await session.run(
+            """
+            MATCH (d:Document {tenant_id: $tenant_id})
+            OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:DocumentChunk {
+                tenant_id: $tenant_id
+            })
+            RETURN d.id AS id,
+                   d.filename AS filename,
+                   count(c) AS chunk_count
+            ORDER BY filename
+            """,
+            tenant_id=user.tenant_id,
+        )
+
+        records = await result.data()
+
+    return {"nodes": records}
+
+
+@app.get("/api/v1/graph/explore/{document_id}")
+async def explore_document_graph(
+    document_id: str,
+    user: User = Depends(get_current_user),
+):
+    async with neo4j_driver.session(
+        database=NEO4J_DATABASE
+    ) as session:
+
+        result = await session.run(
+            """
+            MATCH (d:Document {
+                id: $document_id,
+                tenant_id: $tenant_id
+            })
+            OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:DocumentChunk {
+                tenant_id: $tenant_id
+            })
+            RETURN d.id AS document_id,
+                   d.filename AS filename,
+                   collect({
+                       id: c.id,
+                       text: c.text,
+                       chunk_index: c.chunk_index
+                   }) AS chunks
+            """,
+            document_id=document_id,
+            tenant_id=user.tenant_id,
+        )
+
+        record = await result.single()
+
+    if not record:
+        raise HTTPException(404, "Document not found in this workspace.")
+
+    return {
+        "document_id": record["document_id"],
+        "filename": record["filename"],
+        "chunks": [
+            chunk for chunk in record["chunks"]
+            if chunk.get("id")
+        ],
+    }
