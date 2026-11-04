@@ -1103,4 +1103,100 @@ async def explore_document_graph(
             chunk for chunk in record["chunks"]
             if chunk.get("id")
         ],
+    }ENTERPRISE_PLANS = {
+    "growth": {
+        "name": "Enterprise GraphRAG Growth",
+        "monthly_price": 2000,
+        "annual_price": 21600,
+        "implementation_fee": 3500,
+        "included_users": 25,
+        "included_documents": 25000,
+    },
+    "business": {
+        "name": "Enterprise GraphRAG Business",
+        "monthly_price": 5000,
+        "annual_price": 54000,
+        "implementation_fee": 10000,
+        "included_users": 100,
+        "included_documents": 100000,
+    },
+    "enterprise": {
+        "name": "Enterprise GraphRAG Enterprise",
+        "monthly_price": 10000,
+        "annual_price": 108000,
+        "implementation_fee": 25000,
+        "included_users": 250,
+        "included_documents": 500000,
+    },
+}
+
+
+@app.get("/api/v1/pricing")
+async def get_pricing():
+    return {
+        "currency": "USD",
+        "plans": ENTERPRISE_PLANS,
+    }
+
+
+class SubscriptionRequest(BaseModel):
+    plan: str
+    billing_period: str = "monthly"
+
+
+@app.post("/api/v1/subscriptions/request")
+async def request_subscription(
+    payload: SubscriptionRequest,
+    user: User = Depends(require_admin),
+):
+    plan_name = payload.plan.lower()
+
+    if plan_name not in ENTERPRISE_PLANS:
+        raise HTTPException(400, "Unknown plan.")
+
+    if payload.billing_period not in {"monthly", "annual"}:
+        raise HTTPException(400, "Invalid billing period.")
+
+    plan = ENTERPRISE_PLANS[plan_name]
+
+    amount = plan[
+        "monthly_price"
+        if payload.billing_period == "monthly"
+        else "annual_price"
+    ]
+
+    return {
+        "tenant_id": user.tenant_id,
+        "plan": plan_name,
+        "billing_period": payload.billing_period,
+        "amount": amount,
+        "currency": "USD",
+        "implementation_fee": plan["implementation_fee"],
+        "status": "quotation_requested",
+    }
+
+
+@app.get("/api/v1/subscriptions/current")
+async def get_current_subscription(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.tenant_id == user.tenant_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        return {"subscription": None}
+
+    return {
+        "id": subscription.id,
+        "plan": subscription.plan,
+        "status": subscription.status,
+        "starts_at": subscription.starts_at,
+        "ends_at": subscription.ends_at,
     }
