@@ -1478,4 +1478,191 @@ async def ingest_connector_document(
         "connector": connector_id,
         "filename": filename,
         "chunks_indexed": len(chunks),
-        }
+        }@app.get("/api/v1/dashboard")
+async def dashboard(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    document_count = await db.scalar(
+        select(func.count(Document.id)).where(
+            Document.tenant_id == user.tenant_id
+        )
+    )
+
+    user_count = await db.scalar(
+        select(func.count(User.id)).where(
+            User.tenant_id == user.tenant_id
+        )
+    )
+
+    audit_count = await db.scalar(
+        select(func.count(AuditEvent.id)).where(
+            AuditEvent.tenant_id == user.tenant_id
+        )
+    )
+
+    return {
+        "backend_url": BACKEND_PUBLIC_URL,
+        "tenant_id": user.tenant_id,
+        "metrics": {
+            "documents": document_count or 0,
+            "users": user_count or 0,
+            "audit_events": audit_count or 0,
+        },
+        "generated_at": utc_now(),
+    }
+
+
+@app.get("/api/v1/usage")
+async def usage(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    documents = await db.scalar(
+        select(func.count(Document.id)).where(
+            Document.tenant_id == user.tenant_id
+        )
+    )
+
+    members = await db.scalar(
+        select(func.count(User.id)).where(
+            User.tenant_id == user.tenant_id
+        )
+    )
+
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.tenant_id == user.tenant_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+
+    subscription = result.scalar_one_or_none()
+    plan_name = subscription.plan if subscription else "free"
+    plan = ENTERPRISE_PLANS.get(plan_name)
+
+    return {
+        "plan": plan_name,
+        "usage": {
+            "documents": documents or 0,
+            "members": members or 0,
+        },
+        "limits": (
+            {
+                "documents": plan["included_documents"],
+                "members": plan["included_users"],
+            }
+            if plan else None
+        ),
+    }
+
+
+@app.get("/api/v1/mcp/tools")
+async def mcp_tools(
+    user: User = Depends(get_current_user),
+):
+    return {
+        "server_name": "EnterpriseKnowledgeHub",
+        "backend_url": BACKEND_PUBLIC_URL,
+        "tools": [
+            {
+                "name": "search_enterprise_documents",
+                "method": "POST",
+                "endpoint": "/api/v1/search",
+            },
+            {
+                "name": "list_enterprise_documents",
+                "method": "GET",
+                "endpoint": "/api/v1/documents",
+            },
+            {
+                "name": "explore_knowledge_graph",
+                "method": "GET",
+                "endpoint": "/api/v1/graph/explore/{document_id}",
+            },
+        ],
+        "note": "This endpoint describes available tools; it is not itself a running MCP protocol server.",
+    }
+
+
+@app.get("/api/v1/system/status")
+async def system_status(
+    user: User = Depends(require_admin),
+):
+    status = {
+        "api": "online",
+        "postgresql": "offline",
+        "neo4j": "offline",
+    }
+
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(select(1))
+        status["postgresql"] = "online"
+    except Exception:
+        logger.exception("PostgreSQL health check failed.")
+
+    try:
+        await neo4j_driver.verify_connectivity()
+        status["neo4j"] = "online"
+    except Exception:
+        logger.exception("Neo4j health check failed.")
+
+    healthy = (
+        status["postgresql"] == "online"
+        and status["neo4j"] == "online"
+    )
+
+    return {
+        "backend_url": BACKEND_PUBLIC_URL,
+        "overall_status": "healthy" if healthy else "degraded",
+        "services": status,
+        "checked_at": utc_now(),
+    }
+
+
+@app.get("/api/v1/health")
+async def detailed_health():
+    status = {
+        "api": "online",
+        "postgresql": "offline",
+        "neo4j": "offline",
+    }
+
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(select(1))
+        status["postgresql"] = "online"
+    except Exception:
+        logger.exception("PostgreSQL health check failed.")
+
+    try:
+        await neo4j_driver.verify_connectivity()
+        status["neo4j"] = "online"
+    except Exception:
+        logger.exception("Neo4j health check failed.")
+
+    healthy = (
+        status["postgresql"] == "online"
+        and status["neo4j"] == "online"
+    )
+
+    return {
+        "backend_url": BACKEND_PUBLIC_URL,
+        "status": "healthy" if healthy else "degraded",
+        "services": status,
+    }
+
+
+# UVICORN APPLICATION STARTUP
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "Main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "10000")),
+        reload=False,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+    )
