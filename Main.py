@@ -1199,4 +1199,283 @@ async def get_current_subscription(
         "status": subscription.status,
         "starts_at": subscription.starts_at,
         "ends_at": subscription.ends_at,
+    }class PaymentRequest(BaseModel):
+    plan: str
+    billing_period: str = "monthly"
+    include_implementation: bool = False
+
+
+@app.post("/api/v1/payments/request")
+async def create_payment_request(
+    payload: PaymentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    plan_name = payload.plan.lower()
+
+    if plan_name not in ENTERPRISE_PLANS:
+        raise HTTPException(400, "Unknown plan.")
+
+    if payload.billing_period not in {"monthly", "annual"}:
+        raise HTTPException(400, "Invalid billing period.")
+
+    plan = ENTERPRISE_PLANS[plan_name]
+
+    amount = plan[
+        "monthly_price"
+        if payload.billing_period == "monthly"
+        else "annual_price"
+    ]
+
+    if payload.include_implementation:
+        amount += plan["implementation_fee"]
+
+    payment = Payment(
+        tenant_id=user.tenant_id,
+        provider="manual",
+        provider_reference=str(uuid.uuid4()),
+        amount=amount,
+        currency="USD",
+        status="pending",
+    )
+
+    db.add(payment)
+    await db.commit()
+    await db.refresh(payment)
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "payment.requested",
+        "payment",
+        payment.id,
+        {
+            "plan": plan_name,
+            "billing_period": payload.billing_period,
+            "amount": amount,
+        },
+    )
+
+    return {
+        "payment_id": payment.id,
+        "reference": payment.provider_reference,
+        "amount": amount,
+        "currency": "USD",
+        "status": "pending",
     }
+
+
+@app.get("/api/v1/payments")
+async def list_payments(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    result = await db.execute(
+        select(Payment)
+        .where(Payment.tenant_id == user.tenant_id)
+        .order_by(Payment.created_at.desc())
+    )
+
+    return [
+        {
+            "id": payment.id,
+            "provider": payment.provider,
+            "reference": payment.provider_reference,
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "status": payment.status,
+            "created_at": payment.created_at,
+        }
+        for payment in result.scalars().all()
+    ]
+
+
+@app.post("/api/v1/admin/payments/{payment_id}/verify")
+async def verify_payment_manually(
+    payment_id: str,
+    verified_amount: int,
+    verification_note: str,
+    x_platform_admin_key: str = Header(default=""),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    platform_key = os.getenv("PLATFORM_ADMIN_KEY", "")
+
+    if not platform_key or not hmac.compare_digest(
+        x_platform_admin_key, platform_key
+    ):
+        raise HTTPException(403, "Platform administrator verification required.")
+
+    result = await db.execute(
+        select(Payment).where(
+            Payment.id == payment_id,
+            Payment.tenant_id == user.tenant_id,
+        )
+    )
+
+    payment = result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(404, "Payment not found.")
+
+    if payment.status != "pending":
+        raise HTTPException(409, "Payment is not pending.")
+
+    if payment.amount != verified_amount:
+        raise HTTPException(400, "Amount does not match payment request.")
+
+    payment.status = "confirmed"
+
+    await db.commit()
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "payment.manually_verified",
+        "payment",
+        payment.id,
+        {"verification_note": verification_note},
+    )
+
+    return {
+        "payment_id": payment.id,
+        "status": "confirmed",
+        "message": "Payment record updated.",
+    }SUPPORTED_CONNECTORS = {
+    "google_drive": "Google Drive",
+    "sharepoint": "Microsoft SharePoint",
+    "onedrive": "Microsoft OneDrive",
+    "slack": "Slack",
+    "notion": "Notion",
+    "confluence": "Confluence",
+    "salesforce": "Salesforce",
+    "hubspot": "HubSpot",
+    "custom": "Custom connector",
+}
+
+
+class ConnectorDocumentInput(BaseModel):
+    connector: str
+    external_id: str
+    filename: str
+    content: str
+
+
+@app.get("/api/v1/connectors")
+async def get_connectors(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Document.source)
+        .where(Document.tenant_id == user.tenant_id)
+        .distinct()
+    )
+
+    active_sources = set(result.scalars().all())
+
+    return {
+        "connectors": [
+            {
+                "id": connector_id,
+                "name": connector_name,
+                "status": (
+                    "data_received"
+                    if connector_id in active_sources
+                    else "not_connected"
+                ),
+            }
+            for connector_id, connector_name in SUPPORTED_CONNECTORS.items()
+        ]
+    }
+
+
+@app.post("/api/v1/connectors/ingest")
+async def ingest_connector_document(
+    payload: ConnectorDocumentInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    connector_id = payload.connector.lower().strip()
+
+    if connector_id not in SUPPORTED_CONNECTORS:
+        raise HTTPException(400, "Unsupported connector.")
+
+    content_hash = hashlib.sha256(
+        payload.content.encode()
+    ).hexdigest()
+
+    duplicate_result = await db.execute(
+        select(Document).where(
+            Document.tenant_id == user.tenant_id,
+            Document.source == connector_id,
+            Document.text_hash == content_hash,
+        ).limit(1)
+    )
+
+    duplicate = duplicate_result.scalar_one_or_none()
+
+    if duplicate:
+        return {
+            "status": "already_ingested",
+            "document_id": duplicate.id,
+        }
+
+    document_id = str(uuid.uuid4())
+    filename = Path(payload.filename).name
+    chunks = split_text(payload.content)
+
+    document = Document(
+        id=document_id,
+        tenant_id=user.tenant_id,
+        uploaded_by=user.id,
+        filename=filename,
+        content_type="text/plain",
+        source=connector_id,
+        extracted_text=payload.content,
+        text_hash=content_hash,
+    )
+
+    db.add(document)
+    await db.commit()
+
+    try:
+        await index_document_in_graph(
+            document_id,
+            user.tenant_id,
+            filename,
+            chunks,
+        )
+
+    except Exception:
+        logger.exception("Connector graph indexing failed.")
+        await db.delete(document)
+        await db.commit()
+        raise HTTPException(503, "Connector indexing failed.")
+
+    await write_audit(
+        db,
+        user.tenant_id,
+        user.id,
+        "connector.document_ingested",
+        "document",
+        document_id,
+        {
+            "connector": connector_id,
+            "external_id": payload.external_id,
+            "filename": filename,
+            "chunks": len(chunks),
+        },
+        request.client.host if request.client else "",
+    )
+
+    return {
+        "status": "ingested",
+        "document_id": document_id,
+        "connector": connector_id,
+        "filename": filename,
+        "chunks_indexed": len(chunks),
+        }
