@@ -1491,7 +1491,10 @@ async def ingest_connector_document(
         "connector": connector_id,
         "filename": filename,
         "chunks_indexed": len(chunks),
-        }@app.get("/api/v1/dashboard")
+            }
+
+
+@app.get("/api/v1/dashboard")
 async def dashboard(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
