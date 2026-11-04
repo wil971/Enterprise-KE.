@@ -181,7 +181,10 @@ async def health():
         "status": "online",
         "backend_url": BACKEND_PUBLIC_URL,
         "timestamp": utc_now().isoformat(),
-}class Organization(Base):
+    }
+
+
+class Organization(Base):
     __tablename__ = "organizations"
 
     id: Mapped[str] = mapped_column(
