@@ -1011,7 +1011,7 @@ async def search_documents(
         select(Document)
         .where(
             Document.tenant_id == user.tenant_id,
-            *conditions,
+            *conditions,)
         )
         .order_by(Document.created_at.desc())
         .limit(payload.limit)
