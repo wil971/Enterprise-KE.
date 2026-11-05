@@ -1116,7 +1116,7 @@ async def explore_document_graph(
         "chunks": {
             chunk for chunk in record["chunks"]
             if chunk.get("id")
-            }
+        }
 
 
 ENTERPRISE_PLANS = {
