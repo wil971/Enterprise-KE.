@@ -1118,7 +1118,6 @@ async def explore_document_graph(
             if chunk.get("id")
         }
 
-
 ENTERPRISE_PLANS = {
     "growth": {
         "name": "Enterprise GraphRAG Growth",
