@@ -1012,7 +1012,7 @@ async def search_documents(
         .where(
             Document.tenant_id == user.tenant_id,
             *conditions,)
-        )
+        
      ( 
     order_by(Document.created_at.desc())
         limit(payload.limit)
