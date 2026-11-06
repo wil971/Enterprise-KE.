@@ -1014,8 +1014,8 @@ async def search_documents(
             *conditions,)
         
      ( 
-    order_by(Document.created_at.desc())
-        limit(payload.limit)
+    . order_by(Document.created_at.desc())
+    . limit(payload.limit)
     )
 
     documents = result.scalars().all()
