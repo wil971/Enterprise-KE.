@@ -1362,7 +1362,10 @@ async def verify_payment_manually(
         "payment_id": payment.id,
         "status": "confirmed",
         "message": "Payment record updated.",
-    }SUPPORTED_CONNECTORS = {
+    }
+
+
+SUPPORTED_CONNECTORS = {
     "google_drive": "Google Drive",
     "sharepoint": "Microsoft SharePoint",
     "onedrive": "Microsoft OneDrive",
