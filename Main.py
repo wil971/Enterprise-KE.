@@ -1110,13 +1110,14 @@ async def explore_document_graph(
     if not record:
         raise HTTPException(404, "Document not found in this workspace.")
 
-    return (
+        return {
         "document_id": record["document_id"],
         "filename": record["filename"],
-        "chunks": (
+        "chunks": [
             chunk for chunk in record["chunks"]
             if chunk.get("id")
-        )
+        ],
+        }
 
 ENTERPRISE_PLANS = {
     "growth": {
