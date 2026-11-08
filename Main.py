@@ -133,21 +133,31 @@ security = HTTPBearer(auto_error=False)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: Non-blocking individual connection handlers
     try:
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
-
-        await neo4j_driver.verify_connectivity()
         logger.info("Supabase PostgreSQL connected.")
+    except Exception as e:
+        logger.error(f"PostgreSQL startup warning: {e}")
+
+    try:
+        await neo4j_driver.verify_connectivity()
         logger.info("Neo4j connected.")
-        logger.info("Backend URL: %s", BACKEND_PUBLIC_URL)
+    except Exception as e:
+        logger.error(f"Neo4j startup warning: {e}")
 
-        yield
+    logger.info("Backend URL: %s", BACKEND_PUBLIC_URL)
 
-    finally:
+    yield
+
+    # Shutdown cleanup
+    try:
         await neo4j_driver.close()
         await engine.dispose()
-
+    except Exception:
+        pass
+        
 
 app = FastAPI(
     title="Enterprise Knowledge Graph API",
