@@ -40,11 +40,11 @@ BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 # SUPABASE POSTGRESQL
 from sqlalchemy.engine import URL
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "postgres")
+DB_USER = os.getenv("DATABASE_USER")
+DB_PASSWORD = os.getenv("DATABASE_PASSWORD")
+DB_HOST = os.getenv("DATABASE_HOST")
+DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
+DB_NAME = os.getenv("DATABASE_NAME", "postgres")
 
 DATABASE_URL = URL.create(
     drivername="postgresql+asyncpg",
