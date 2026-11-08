@@ -93,13 +93,16 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
+
 engine = create_async_engine(
     DATABASE_URL,
+    connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
     pool_recycle=1800,
 )
+
 
 AsyncSessionLocal = sessionmaker(
     engine,
