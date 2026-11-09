@@ -47,7 +47,7 @@ DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
 DB_NAME = os.getenv("DATABASE_NAME", "postgres")
 
 DATABASE_URL = URL.create(
-    drivername="postgresql+sqlalchemy
+    drivername="postgresql+"sqlalchemy"
     username=DB_USER,
     password=DB_PASSWORD,
     host=DB_HOST,
