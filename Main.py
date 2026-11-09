@@ -54,6 +54,10 @@ DATABASE_URL = URL.create(
     port=DB_PORT,
     database=DB_NAME,
 )
+print("DB USER:", DB_USER)
+print("DB HOST:", DB_HOST)
+print("DB NAME:", DB_NAME)
+print("DB PASSWORD PRESENT:", bool(DB_PASSWORD))
 
 # NEO4J
 NEO4J_URI = os.getenv("NEO4J_URI", "").strip()
