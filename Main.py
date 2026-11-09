@@ -38,7 +38,11 @@ logger = logging.getLogger("enterprise-knowledge-graph")
 BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 
 # SUPABASE POSTGRESQL CONFIGURATION (REPLACE LINES 41-58 WITH THIS)
+# PASTE THIS INSTEAD:
 import os
+import urllib.parse
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 
 DB_USER = os.getenv("DATABASE_USER")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD")
@@ -46,33 +50,37 @@ DB_HOST = os.getenv("DATABASE_HOST")
 DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
 DB_NAME = os.getenv("DATABASE_NAME", "postgres")
 
-# 1. This provides the exact string your code needs on line 120 without malforming special characters
-DATABASE_URL = f"postgresql+asyncpg://{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
+safe_user = urllib.parse.quote_plus(DB_USER)
+safe_password = urllib.parse.quote_plus(DB_PASSWORD)
 
-# 2. Initialize the async engine feeding the raw credentials to asyncpg
+# 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
+DATABASE_URL = f"postgresql+asyncpg://{safe_user}:{safe_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# 3. Create the stable async engine with explicitly disabled statement caching
+# Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
 engine = create_async_engine(
     DATABASE_URL,
-    connect_args={
-        "user": DB_USER,
-        "password": DB_PASSWORD,
-    },
     pool_size=5,
     max_overflow=10,
-    pool_timeout=30
+    pool_timeout=30,
+    connect_args={
+        "prepare_threshold": None,
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0
+    }
 )
 
-# 3. Establish the sessionmaker factory so your endpoints can execute queries
+# 4. Bind the production sessionmaker factory for application endpoints
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False
 )
 
-print("DB USER:", DB_USER)
+print("DB USER STABLE URL GENERATED SUCCESSFULLY")
 print("DB HOST:", DB_HOST)
 print("DB NAME:", DB_NAME)
-print("DB PASSWORD PRESENT:", bool(DB_PASSWORD))
-
 
 
 # NEO4J
