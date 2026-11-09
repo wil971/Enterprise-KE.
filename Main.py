@@ -37,12 +37,7 @@ logger = logging.getLogger("enterprise-knowledge-graph")
 # YOUR ACTUAL RENDER BACKEND URL
 BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 
-# SUPABASE POSTGRESQL
-# =====================================================================
-# REPLACE FROM: "from sqlalchemy.engine import URL" TO THE PRINT LINES 
-# WITH THIS CLEAN CONFIGURATION BLOCK:
-# =====================================================================
-
+# SUPABASE POSTGRESQL CONFIGURATION (REPLACE LINES 41-58 WITH THIS)
 import os
 
 DB_USER = os.getenv("DATABASE_USER")
@@ -51,23 +46,22 @@ DB_HOST = os.getenv("DATABASE_HOST")
 DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
 DB_NAME = os.getenv("DATABASE_NAME", "postgres")
 
-# 1. Build a clean, un-encoded core routing string
-# Notice: Password is omitted completely from the URL string to bypass the parser
-ASYNC_CONNECTION_STRING = f"postgresql+asyncpg://{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# 1. This provides the exact string your code needs on line 120 without malforming special characters
+DATABASE_URL = f"postgresql+asyncpg://{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# 2. Initialize the engine by forcing the raw credentials directly into connect_args
+# 2. Initialize the async engine feeding the raw credentials to asyncpg
 engine = create_async_engine(
-    ASYNC_CONNECTION_STRING,
+    DATABASE_URL,
     connect_args={
         "user": DB_USER,
-        "password": DB_PASSWORD,  # Delivered completely raw to asyncpg without encoding
+        "password": DB_PASSWORD,
     },
     pool_size=5,
     max_overflow=10,
     pool_timeout=30
 )
 
-# 3. Bind to your sessionmaker factory
+# 3. Establish the sessionmaker factory so your endpoints can execute queries
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -78,6 +72,7 @@ print("DB USER:", DB_USER)
 print("DB HOST:", DB_HOST)
 print("DB NAME:", DB_NAME)
 print("DB PASSWORD PRESENT:", bool(DB_PASSWORD))
+
 
 
 # NEO4J
