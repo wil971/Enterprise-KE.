@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 user= os.getenv("database_user")
-Supabase_password= os.getenv("Supabase_password")
+Supabase_password= os.getenv("SUPABASE_PASSWORD")
 host = os.getenv("host")
 port= int(os.getenv("port", "5432"))
 database= os.getenv("database", "postgres")
@@ -55,12 +55,12 @@ safe_user = urllib.parse.quote_plus(user)
 safe_password = urllib.parse.quote_plus(database_password)
 
 # 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
-database_url= f"postgresql+asyncpg://{safe_user}:{safe_password}@{host}:{port}/{database}"
+SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{host}:{port}/{database}"
 
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
 engine = create_async_engine(
-    Supabase_url,
+    SUPABASE_URI,
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,
