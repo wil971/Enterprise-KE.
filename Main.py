@@ -44,23 +44,23 @@ import urllib.parse
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-SUPABASE_USER= os.getenv("SUPABASE_USER")
-SUPABASE_PASSWORD= os.getenv("SUPABASE_PASSWORD")
-SUPABASE_HOST= os.getenv("SUPABASE_HOST")
-SUPABASE_PORT= int(os.getenv("SUPABASE_PORT", "5432"))
-SUPABASE_DATABASE= os.getenv("SUPABASE_DATABASE", "postgres")
+Supabase_user= os.getenv("Supabase_user")
+Supabase_password= os.getenv("Supabase_password")
+Supabase_host= os.getenv("Supabase_host")
+Supabase_port= int(os.getenv("Supabase_port", "5432"))
+Supabase_database= os.getenv("Supabase_database", "postgres")
 
 # 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
-safe_user = urllib.parse.quote_plus(SUPABASE_USER)
-safe_password = urllib.parse.quote_plus(SUPABASE_PASSWORD)
+safe_user = urllib.parse.quote_plus(Supabase_user)
+safe_password = urllib.parse.quote_plus(Supabase_database)
 
 # 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
-SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{SUPABASE_HOST}:{SUPABASE_PORT}/{SUPABASE_DATABASE}"
+Supabase_url= f"postgresql+asyncpg://{safe_user}:{safe_password}@{Supabase_host}:{Supabase_port}/{Supabase_database}"
 
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
 engine = create_async_engine(
-    SUPABASE_URI,
+    Supabase_url
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,
@@ -79,8 +79,8 @@ AsyncSessionLocal = sessionmaker(
 )
 
 print("userSTABLE url GENERATED SUCCESSFULLY")
-print("SUPABASE_HOST:", SUPABASE_HOST)
-print("SUPABASE_DATABASE:",SUPABASE_DATABASE)
+print("Supabase_host:", Supabase_host)
+print("Supabase_database:",Supabase_database)
 
 
 # NEO4J
@@ -126,7 +126,7 @@ CORS_ORIGINS = [
 
 
 engine = create_async_engine(
-    SUPABASE_URI,
+    Supabase_url,
     connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
