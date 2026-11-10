@@ -44,18 +44,18 @@ import urllib.parse
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-user= os.getenv("SUPABASE_USER")
+SUPABASE_USER= os.getenv("SUPABASE_USER")
 SUPABASE_PASSWORD= os.getenv("SUPABASE_PASSWORD")
-host = os.getenv("host")
-port= int(os.getenv("port", "5432"))
-database= os.getenv("database", "postgres")
+SUPABASE_HOST= os.getenv("SUPABASE_HOST")
+SUPABASE_PORT= int(os.getenv("SUPABASE_PORT", "5432"))
+SUPABASE_DATABASE= os.getenv("SUPABASE_DATABASE", "postgres")
 
 # 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
 safe_user = urllib.parse.quote_plus(user)
 safe_password = urllib.parse.quote_plus(SUPABASE_PASSWORD)
 
 # 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
-SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{host}:{port}/{database}"
+SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{SUPABASE_HOST}:{SUPABASE_PORT}/{SUPABASE_database}"
 
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
@@ -79,8 +79,8 @@ AsyncSessionLocal = sessionmaker(
 )
 
 print("userSTABLE url GENERATED SUCCESSFULLY")
-print("host:", host)
-print("database:", database)
+print("SUPABASE_HOST:", SUPABASE_HOST)
+print("SUPABASE_DATABASE:",SUPABASE_DATABASE)
 
 
 # NEO4J
