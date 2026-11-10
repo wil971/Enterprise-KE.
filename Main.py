@@ -60,7 +60,7 @@ Supabase_url= f"postgresql+asyncpg://{safe_user}:{safe_password}@{Supabase_host}
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
 engine = create_async_engine(
-    Supabase_url
+    Supabase_url,
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,
