@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 user= os.getenv("SUPABASE_USER")
-Supabase_password= os.getenv("SUPABASE_PASSWORD")
+SUPABASE_PASSWORD= os.getenv("SUPABASE_PASSWORD")
 host = os.getenv("host")
 port= int(os.getenv("port", "5432"))
 database= os.getenv("database", "postgres")
