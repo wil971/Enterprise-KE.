@@ -126,7 +126,7 @@ CORS_ORIGINS = [
 
 
 engine = create_async_engine(
-    database_url,
+    SUPABASE_URI,
     connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
