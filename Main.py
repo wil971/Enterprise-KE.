@@ -46,9 +46,9 @@ from sqlalchemy.orm import sessionmaker
 
 DB_USER = os.getenv("DATABASE_USER")
 DB_PASSWORD = os.getenv("DATABASE_PASSWORD")
-DB_HOST = os.getenv("DATABASE_HOST")
+host = os.getenv("host")
 DB_PORT = int(os.getenv("DATABASE_PORT", "5432"))
-DB_NAME = os.getenv("DATABASE_NAME", "postgres")
+database= os.getenv("database", "postgres")
 
 # 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
 safe_user = urllib.parse.quote_plus(DB_USER)
