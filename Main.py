@@ -52,7 +52,7 @@ database= os.getenv("database", "postgres")
 
 # 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
 safe_user = urllib.parse.quote_plus(user)
-safe_password = urllib.parse.quote_plus(database_password)
+safe_password = urllib.parse.quote_plus(SUPABASEPASSWORD)
 
 # 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
 SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{host}:{port}/{database}"
