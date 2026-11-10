@@ -44,7 +44,7 @@ import urllib.parse
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-user= os.getenv("database_user")
+user= os.getenv("SUPABASE_USER")
 Supabase_password= os.getenv("SUPABASE_PASSWORD")
 host = os.getenv("host")
 port= int(os.getenv("port", "5432"))
