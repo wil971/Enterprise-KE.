@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 user= os.getenv("database_user")
-database_password= os.getenv("database_password")
+Supabase_password= os.getenv("Supabase_password")
 host = os.getenv("host")
 port= int(os.getenv("port", "5432"))
 database= os.getenv("database", "postgres")
@@ -60,7 +60,7 @@ database_url= f"postgresql+asyncpg://{safe_user}:{safe_password}@{host}:{port}/{
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
 engine = create_async_engine(
-    database_url,
+    Supabase_url,
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,
