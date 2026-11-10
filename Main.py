@@ -78,7 +78,7 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
-print("userSTABLE URL GENERATED SUCCESSFULLY")
+print("userSTABLE url GENERATED SUCCESSFULLY")
 print("host:", host)
 print("database:", database)
 
@@ -126,7 +126,7 @@ CORS_ORIGINS = [
 
 
 engine = create_async_engine(
-    DATABASE_URL,
+    database_url,
     connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
