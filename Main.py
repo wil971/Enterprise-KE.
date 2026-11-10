@@ -51,11 +51,11 @@ SUPABASE_PORT= int(os.getenv("SUPABASE_PORT", "5432"))
 SUPABASE_DATABASE= os.getenv("SUPABASE_DATABASE", "postgres")
 
 # 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
-safe_user = urllib.parse.quote_plus(user)
+safe_user = urllib.parse.quote_plus(SUPABASE_USER)
 safe_password = urllib.parse.quote_plus(SUPABASE_PASSWORD)
 
 # 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
-SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{SUPABASE_HOST}:{SUPABASE_PORT}/{SUPABASE_database}"
+SUPABASE_URI= f"postgresql+asyncpg://{safe_user}:{safe_password}@{SUPABASE_HOST}:{SUPABASE_PORT}/{SUPABASE_DATABASE}"
 
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
