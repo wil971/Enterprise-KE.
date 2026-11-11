@@ -55,7 +55,7 @@ safe_user = urllib.parse.quote_plus(Supabase_user)
 safe_password = urllib.parse.quote_plus(Supabase_database)
 
 # 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
-Supabase_url= f"postgresql+asyncpg://{safe_user}:{safe_password}@{Supabase_host}:{Supabase_port}/{Supabase_database}"
+Supabase_url=f"postgresql+asyncpg://{safe_user}:{safe_password}@{Supabase_host}:{Supabase_port}/{Supabase_database}"
 
 # 3. Create the stable async engine with explicitly disabled statement caching
 # Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
