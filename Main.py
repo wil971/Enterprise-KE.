@@ -44,31 +44,31 @@ import urllib.parse
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-Supabase_user= os.getenv("Supabase_user")
-Supabase_password= os.getenv("Supabase_password")
-Supabase_host= os.getenv("Supabase_host")
-Supabase_port= int(os.getenv("Supabase_port", "5432"))
-Supabase_database= os.getenv("Supabase_database", "postgres")
+Supabase_user = os.getenv("Supabase_user")
+Supabase_password = os.getenv("Supabase_password")
+Supabase_host = os.getenv("Supabase_host")
+Supabase_port = int(os.getenv("Supabase_port", "5432"))
+Supabase_database = os.getenv("Supabase_database", "postgres")
 
-# 1. Manually URL-encode both components to force asyncpg to parse them as raw, unbreakable payloads
 safe_user = urllib.parse.quote_plus(Supabase_user)
-safe_password = urllib.parse.quote_plus(Supabase_database)
+safe_password = urllib.parse.quote_plus(Supabase_password)
 
-# 2. Build the final unified string that passes BOTH the tenant ID and password without corruption
-Supabase_url=f"postgresql+asyncpg://{safe_user}:{safe_password}@{Supabase_host}:{Supabase_port}/{Supabase_database}"
+DATABASE_URL = (
+    f"postgresql+asyncpg://{safe_user}:{safe_password}"
+    f"@{Supabase_host}:{Supabase_port}/{Supabase_database}"
+)
 
-# 3. Create the stable async engine with explicitly disabled statement caching
-# Supabase poolers do not support protocol-level named prepared statements; this config eliminates pool friction.
 engine = create_async_engine(
-    Supabase_url,
+    DATABASE_URL,
+    connect_args={
+        "ssl": "require",
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    },
+    pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
-    pool_timeout=30,
-    connect_args={
-        "prepare_threshold": None,
-        "statement_cache_size": 0,
-        "prepared_statement_cache_size": 0
-    }
+    pool_recycle=1800,
 )
 
 # 4. Bind the production sessionmaker factory for application endpoints
