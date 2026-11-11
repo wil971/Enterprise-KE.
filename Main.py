@@ -53,13 +53,13 @@ Supabase_database = os.getenv("Supabase_database", "postgres")
 safe_user = urllib.parse.quote_plus(Supabase_user)
 safe_password = urllib.parse.quote_plus(Supabase_password)
 
-DATABASE_URL = (
+Supabase_url = (
     f"postgresql+asyncpg://{safe_user}:{safe_password}"
     f"@{Supabase_host}:{Supabase_port}/{Supabase_database}"
 )
 
 engine = create_async_engine(
-    DATABASE_URL,
+    Supabase_url,
     connect_args={
         "ssl": "require",
         "statement_cache_size": 0,
