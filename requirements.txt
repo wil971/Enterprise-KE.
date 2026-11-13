@@ -42,6 +42,7 @@ asyncpg>=0.29
 pgvector>=0.3.6
 neo4j>=5.26,<7
 aiosqlite>=0.19
+npm install postgres
 
 # Validation, authentication and security
 pydantic>=2.6,<3
