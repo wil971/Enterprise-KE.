@@ -38,7 +38,6 @@ fastapi>=0.115,<1
 
 # PostgreSQL / Supabase + Neo4j
 sqlalchemy>=2.0,<3
-asyncpg>=0.29
 pgvector>=0.3.6
 neo4j>=5.26,<7
 aiosqlite>=0.19
