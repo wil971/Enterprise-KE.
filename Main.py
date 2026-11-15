@@ -38,6 +38,7 @@ logger = logging.getLogger("enterprise-knowledge-graph")
 BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 
 # SUPABASE CONFIGURATION FROM SCREENSHOT
+# SUPABASE CONFIGURATION FROM SCREENSHOT
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
@@ -46,8 +47,16 @@ SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
 if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
     raise ValueError("Missing SUPABASE_URL or SUPABASE_SECRET_KEY environment variables!")
 
+# Fallback or direct database URL for SQLAlchemy engine
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("Missing DATABASE_URL environment variable required for SQLAlchemy!")
+
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 engine = create_async_engine(
-    SUPABASE_URL,
+    DATABASE_URL,
     connect_args={
         "ssl": "require",
         "statement_cache_size": 0,
@@ -66,9 +75,10 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
-print("SUPABASE ENGINE CONFIGURED SUCCESSFULLY")
+print("SUPABASE CONFIGURATION & ENGINE CONFIGURED SUCCESSFULLY")
 print("SUPABASE_URL:", SUPABASE_URL)
 print("SUPABASE_JWKS_URL:", SUPABASE_JWKS_URL)
+
 
 
 # NEO4J
