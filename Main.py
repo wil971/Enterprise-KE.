@@ -37,29 +37,17 @@ logger = logging.getLogger("enterprise-knowledge-graph")
 # YOUR ACTUAL RENDER BACKEND URL
 BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 
-# SUPABASE POSTGRESQL CONFIGURATION (REPLACE LINES 41-58 WITH THIS)
-# PASTE THIS INSTEAD:
-import os
-import urllib.parse
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+# SUPABASE CONFIGURATION FROM SCREENSHOT
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
+SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
 
-Supabase_user = os.getenv("Supabase_user")
-Supabase_password = os.getenv("Supabase_password")
-Supabase_host = os.getenv("Supabase_host")
-Supabase_port = int(os.getenv("Supabase_port", "5432"))
-Supabase_database = os.getenv("Supabase_database", "postgres")
-
-safe_user = urllib.parse.quote_plus(Supabase_user)
-safe_password = urllib.parse.quote_plus(Supabase_password)
-
-Supabase_url = (
-    f"postgresql+asyncpg://{safe_user}:{safe_password}"
-    f"@{Supabase_host}:{Supabase_port}/{Supabase_database}"
-)
+if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
+    raise ValueError("Missing SUPABASE_URL or SUPABASE_SECRET_KEY environment variables!")
 
 engine = create_async_engine(
-    Supabase_url,
+    SUPABASE_URL,
     connect_args={
         "ssl": "require",
         "statement_cache_size": 0,
@@ -78,9 +66,9 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
-print("userSTABLE url GENERATED SUCCESSFULLY")
-print("Supabase_host:", Supabase_host)
-print("Supabase_database:",Supabase_database)
+print("SUPABASE ENGINE CONFIGURED SUCCESSFULLY")
+print("SUPABASE_URL:", SUPABASE_URL)
+print("SUPABASE_JWKS_URL:", SUPABASE_JWKS_URL)
 
 
 # NEO4J
@@ -126,7 +114,7 @@ CORS_ORIGINS = [
 
 
 engine = create_async_engine(
-    Supabase_url,
+    SUPABASE_URI,
     connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
