@@ -37,49 +37,54 @@ logger = logging.getLogger("enterprise-knowledge-graph")
 # YOUR ACTUAL RENDER BACKEND URL
 BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 
-# SUPABASE CONFIGURATION 
-# SUPABASE CONFIGURATION 
+
+# SUPABASE CONFIGURATION
+
+# Supabase project API configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
 SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
 
-if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
-    raise ValueError("Missing SUPABASE_URL or SUPABASE_SECRET_KEY environment variables!")
+# Supabase PostgreSQL database connection URL
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 
-# Fallback or direct database URL for SQLAlchemy engine
-SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_URL")
+# Validate required environment variables
 if not SUPABASE_URL:
-    raise ValueError("Missing SUPABASE_URL environment variable required for SQLAlchemy!")
+    raise ValueError("Missing SUPABASE_URL environment variable!")
 
-if SUPABASE_URL and SUPABASE_URL.startswith("https://kzkljprpvdsnyvynuqbz.supabase.co"):
- SUPABASE_URL = "https://kzkljprpvdsnyvynuqbz.supabase.co"
+if not SUPABASE_SECRET_KEY:
+    raise ValueError("Missing SUPABASE_SECRET_KEY environment variable!")
 
+if not SUPABASE_DB_URL:
+    raise ValueError("Missing SUPABASE_DB_URL environment variable!")
 
+# Configure the PostgreSQL URL for SQLAlchemy and asyncpg
+if SUPABASE_DB_URL.startswith("postgresql://"):
+    SUPABASE_DB_URL = SUPABASE_DB_URL.replace(
+        "postgresql://",
+        "postgresql+asyncpg://",
+        1
+    )
+
+# Create the database engine
 engine = create_async_engine(
-    SUPABASE_URL,
-    connect_args={
-        "ssl": "require",
-        "statement_cache_size": 0,
-        "prepared_statement_cache_size": 0,
-    },
+    SUPABASE_DB_URL,
+    connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
     pool_recycle=1800,
 )
 
-# 4. Bind the production sessionmaker factory for application endpoints
+# Create the production database session factory
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False
 )
 
-print("SUPABASE CONFIGURATION & ENGINE CONFIGURED SUCCESSFULLY")
-print("SUPABASE_URL:", SUPABASE_URL)
-print("SUPABASE_JWKS_URL:", SUPABASE_JWKS_URL)
-
+print("SUPABASE CONFIGURATION & DATABASE ENGINE CONFIGURED SUCCESSFULLY")
 
 
 # NEO4J
