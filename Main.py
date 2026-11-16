@@ -49,7 +49,7 @@ if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
 
 # Fallback or direct database URL for SQLAlchemy engine
 SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_URL")
-if not DATABASE_URL:
+if not SUPABASE_URL:
     raise ValueError("Missing SUPABASE_URL environment variable required for SQLAlchemy!")
 
 if SUPABASE_URL.startswith("postgresql://"):
