@@ -52,8 +52,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_URL")
 if not SUPABASE_URL:
     raise ValueError("Missing SUPABASE_URL environment variable required for SQLAlchemy!")
 
-if SUPABASE_URL.startswith("postgresql://"):
-    SUPABASE_URL = SUPABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+if SUPABASE_URL.startswith:https://kzkljprpvdsnyvynuqbz.supabase.co
+    SUPABASE_URL = https://kzkljprpvdsnyvynuqbz.supabase.co
 
 engine = create_async_engine(
     SUPABASE_URL,
