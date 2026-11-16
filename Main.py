@@ -48,15 +48,15 @@ if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
     raise ValueError("Missing SUPABASE_URL or SUPABASE_SECRET_KEY environment variables!")
 
 # Fallback or direct database URL for SQLAlchemy engine
-DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DATABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_URL")
 if not DATABASE_URL:
-    raise ValueError("Missing DATABASE_URL environment variable required for SQLAlchemy!")
+    raise ValueError("Missing SUPABASE_URL environment variable required for SQLAlchemy!")
 
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+if SUPABASE_URL.startswith("postgresql://"):
+    SUPABASE_URL = SUPABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(
-    DATABASE_URL,
+    SUPABASE_URL,
     connect_args={
         "ssl": "require",
         "statement_cache_size": 0,
