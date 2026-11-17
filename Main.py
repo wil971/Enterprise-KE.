@@ -41,27 +41,24 @@ BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 # SUPABASE CONFIGURATION
 
 # Supabase project API configuration
-SUPABASE_DATABASE_PASSWORD = os.getenv("SUPABASE_DATABASE_PASSWORD")
-SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
-SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
-SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
+SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL", "").strip()
 
-# Supabase PostgreSQL database connection URL
-SUPABASE_DATABASE_PASSWORD= os.getenv("SUPABASE_DB_URL")
+# Supabase PostgreSQL database connection
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()
 
 # Validate required environment variables
-if not SUPABASE_DATABASE_PASSWORD:
-    raise ValueError("Missing SUPABASE_URL environment variable!")
+if not SUPABASE_DB_URL:
+    raise ValueError("Missing SUPABASE_DB_URL environment variable!")
 
 if not SUPABASE_SECRET_KEY:
     raise ValueError("Missing SUPABASE_SECRET_KEY environment variable!")
 
-if not SUPABASE_DB_URL:
-    raise ValueError("Missing SUPABASE_DB_URL environment variable!")
-
-# Configure the PostgreSQL URL for SQLAlchemy and asyncpg
-if SUPABASE_DATABASE_PASSWORD.startswith("postgresql://"):
-    SUPABASE_DATABASE_PASSWORD = SUPABASE_DATABASE_PASSWORD.replace(
+# Configure PostgreSQL URL for SQLAlchemy and asyncpg
+if SUPABASE_DB_URL.startswith("postgresql://"):
+    SUPABASE_DB_URL = SUPABASE_DB_URL.replace(
         "postgresql://",
         "postgresql+asyncpg://",
         1
@@ -69,7 +66,7 @@ if SUPABASE_DATABASE_PASSWORD.startswith("postgresql://"):
 
 # Create the database engine
 engine = create_async_engine(
-    SUPABASE_DATABASE_PASSWORD,
+    SUPABASE_DB_URL,
     connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
