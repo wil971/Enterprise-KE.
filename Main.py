@@ -41,7 +41,7 @@ BACKEND_PUBLIC_URL = "https://enterprise-ke-3.onrender.com"
 # SUPABASE CONFIGURATION
 
 # Supabase project API configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
 SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
@@ -50,7 +50,7 @@ SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 
 # Validate required environment variables
-if not SUPABASE_URL:
+if not SUPABASE_DB_URL:
     raise ValueError("Missing SUPABASE_URL environment variable!")
 
 if not SUPABASE_SECRET_KEY:
@@ -130,7 +130,7 @@ CORS_ORIGINS = [
 
 
 engine = create_async_engine(
-    SUPABASE_URL,
+    SUPABASE_DB_URL,
     connect_args={"ssl": "require"},
     pool_pre_ping=True,
     pool_size=5,
