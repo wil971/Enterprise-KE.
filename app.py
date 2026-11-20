@@ -440,4 +440,166 @@ class APIClient:
         )
 
 
-api = APIClient()
+api = APIClient()import streamlit as st
+from api_client import api
+
+
+def login_form():
+    st.subheader("Sign in")
+
+    email = st.text_input("Email", key="login_email")
+    password = st.text_input(
+        "Password",
+        type="password",
+        key="login_password",
+    )
+
+    if st.button("Sign in", key="login_submit"):
+        if not email or not password:
+            st.warning("Enter your email and password.")
+            return
+
+        try:
+            result = api.post(
+                "/api/v1/auth/login",
+                json={
+                    "email": email,
+                    "password": password,
+                },
+            )
+
+            token = result["access_token"]
+
+            api.set_token(token)
+            st.session_state["access_token"] = token
+            st.session_state["current_user"] = result["user"]
+
+            st.success("Signed in successfully.")
+            st.rerun()
+
+        except Exception as error:
+            st.error(str(error))
+
+
+def register_form():
+    st.subheader("Create enterprise account")
+
+    organization = st.text_input(
+        "Organization name",
+        key="reg_organization",
+    )
+
+    full_name = st.text_input(
+        "Full name",
+        key="reg_full_name",
+    )
+
+    email = st.text_input(
+        "Email address",
+        key="reg_email",
+    )
+
+    password = st.text_input(
+        "Password (minimum 12 characters)",
+        type="password",
+        key="reg_password",
+    )
+
+    confirm = st.text_input(
+        "Confirm password",
+        type="password",
+        key="reg_confirm",
+    )
+
+    if st.button("Create account", key="reg_submit"):
+        if not all([organization, full_name, email, password]):
+            st.warning("Please complete all fields.")
+            return
+
+        if len(password) < 12:
+            st.warning("Password must be at least 12 characters.")
+            return
+
+        if password != confirm:
+            st.warning("Passwords do not match.")
+            return
+
+        try:
+            result = api.post(
+                "/api/v1/auth/register",
+                json={
+                    "organization_name": organization,
+                    "full_name": full_name,
+                    "email": email,
+                    "password": password,
+                },
+            )
+
+            token = result["access_token"]
+
+            api.set_token(token)
+            st.session_state["access_token"] = token
+            st.session_state["current_user"] = result["user"]
+
+            st.success("Account created.")
+            st.rerun()
+
+        except Exception as error:
+            st.error(str(error))
+
+
+def auth_page():
+    login_tab, register_tab = st.tabs(
+        ["Sign In", "Create Account"]
+    )
+
+    with login_tab:
+        login_form()
+
+    with register_tab:
+        register_form()import streamlit as st
+from api_client import api
+
+
+def dashboard_page():
+    st.title("Enterprise Overview")
+
+    try:
+        data = api.get("/api/v1/dashboard")
+        usage = api.get("/api/v1/usage")
+
+    except Exception as error:
+        st.error(f"Dashboard unavailable: {error}")
+        return
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Documents", data.get("documents", 0))
+    col2.metric("Team Members", data.get("users", 0))
+    col3.metric("Audit Events", data.get("audit_events", 0))
+
+    st.divider()
+
+    st.subheader("Workspace Information")
+
+    st.write("Tenant ID:", data.get("tenant_id", "Unavailable"))
+    st.write("Backend:", data.get("backend_url", "Unavailable"))
+    st.write("Generated:", data.get("generated_at", "Unavailable"))
+
+    st.divider()
+
+    st.subheader("Subscription & Usage")
+
+    st.write("Plan:", usage.get("plan", "Unavailable"))
+
+    usage_values = usage.get("usage", {})
+    limits = usage.get("limits", {})
+
+    for key, value in usage_values.items():
+        limit = limits.get(key)
+
+        st.write(key.replace("_", " ").title(), value, "/", limit)
+
+        if isinstance(value, (int, float)):
+            if isinstance(limit, (int, float)) and limit > 0:
+                st.progress(min(value / limit, 1.0))
