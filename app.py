@@ -698,3 +698,48 @@ def documents_page():
 
                     except Exception as error:
                         st.error(str(error))
+                        import streamlit as st
+from api_client import api
+
+
+def intelligence_page():
+    st.title("AI Intelligence")
+    st.caption("Search your connected enterprise knowledge.")
+
+    query = st.text_area(
+        "What do you want to find?",
+        placeholder="Enter a question or search query...",
+        max_chars=1000,
+    )
+
+    limit = st.slider(
+        "Results limit",
+        min_value=1,
+        max_value=100,
+        value=20,
+    )
+
+    if st.button("Search Knowledge", type="primary"):
+        if not query.strip():
+            st.warning("Enter a search query.")
+            return
+
+        if len(query.strip()) < 2:
+            st.warning("Query must be at least 2 characters.")
+            return
+
+        try:
+            results = api.post(
+                "/api/v1/search",
+                json={
+                    "query": query.strip(),
+                    "limit": limit,
+                },
+            )
+
+            st.subheader("Search Results")
+            st.json(results)
+
+        except Exception as error:
+            st.error(f"Search failed: {error}")
+            
