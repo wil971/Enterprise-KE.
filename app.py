@@ -606,3 +606,95 @@ def dashboard_page():
         if isinstance(value, (int, float)):
             if isinstance(limit, (int, float)) and limit > 0:
                 st.progress(min(value / limit, 1.0))
+import streamlit as st
+from api_client import api
+
+ALLOWED_TYPES = ["pdf", "docx", "txt", "csv"]
+
+
+def documents_page():
+    st.title("Knowledge Documents")
+    st.caption("Upload, review, and manage workspace documents.")
+
+    st.subheader("Upload document")
+
+    uploaded_file = st.file_uploader(
+        "Choose a file",
+        type=ALLOWED_TYPES,
+        key="document_upload",
+    )
+
+    if uploaded_file:
+        st.write("Selected:", uploaded_file.name)
+
+        if st.button("Upload Document", key="upload_document_btn"):
+            try:
+                result = api.upload(
+                    "/api/v1/documents/upload",
+                    uploaded_file,
+                )
+                st.success("Upload request completed.")
+                st.json(result)
+
+            except Exception as error:
+                st.error(str(error))
+
+    st.divider()
+    st.subheader("Stored documents")
+
+    try:
+        result = api.get("/api/v1/documents")
+
+    except Exception as error:
+        st.error(f"Could not load documents: {error}")
+        return
+
+    if isinstance(result, list):
+        documents = result
+    elif isinstance(result, dict):
+        documents = result.get(
+            "documents",
+            result.get("items", []),
+        )
+    else:
+        documents = []
+
+    if not documents:
+        st.info("No documents returned.")
+        return
+
+    for document in documents:
+        doc_id = (
+            document.get("id")
+            or document.get("document_id")
+            or ""
+        )
+        name = (
+            document.get("filename")
+            or document.get("name")
+            or "Untitled document"
+        )
+
+        with st.expander(name):
+            st.write("Document ID:", doc_id)
+
+            for key, value in document.items():
+                if key not in ("id", "document_id", "filename", "name"):
+                    st.write(
+                        key.replace("_", " ").title(),
+                        value,
+                    )
+
+            if doc_id:
+                if st.button(
+                    "View details",
+                    key=f"document_details_{doc_id}",
+                ):
+                    try:
+                        detail = api.get(
+                            f"/api/v1/documents/{doc_id}"
+                        )
+                        st.json(detail)
+
+                    except Exception as error:
+                        st.error(str(error))
