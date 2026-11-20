@@ -787,4 +787,73 @@ def graph_page():
 
         except Exception as error:
             st.error(f"Graph exploration failed: {error}")
+            import streamlit as st
+from api_client import api
+
+
+def connectors_page():
+    st.title("Connectors")
+    st.caption("Manage integrations and ingest external content.")
+
+    st.subheader("Connector Status")
+
+    try:
+        connector_data = api.get(
+            "/api/v1/connectors"
+        )
+        st.json(connector_data)
+
+    except Exception as error:
+        st.error(f"Connector status unavailable: {error}")
+
+    st.divider()
+    st.subheader("Ingest External Content")
+
+    connector = st.text_input(
+        "Connector name",
+        placeholder="Example: manual",
+    )
+
+    external_id = st.text_input(
+        "External ID",
+        placeholder="Unique source record ID",
+    )
+
+    filename = st.text_input(
+        "Filename",
+        placeholder="document.txt",
+    )
+
+    content = st.text_area(
+        "Content",
+        height=250,
+        placeholder="Paste the content to ingest...",
+    )
+
+    if st.button("Ingest Content"):
+        if not all([
+            connector.strip(),
+            external_id.strip(),
+            filename.strip(),
+            content.strip(),
+        ]):
+            st.warning("Complete all fields.")
+            return
+
+        try:
+            result = api.post(
+                "/api/v1/connectors/ingest",
+                json={
+                    "connector": connector.strip(),
+                    "external_id": external_id.strip(),
+                    "filename": filename.strip(),
+                    "content": content,
+                },
+            )
+
+            st.success("Ingestion request completed.")
+            st.json(result)
+
+        except Exception as error:
+            st.error(f"Ingestion failed: {error}")
             
