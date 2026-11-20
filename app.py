@@ -964,4 +964,156 @@ def audit_page():
 
     except Exception as error:
         st.error(f"Audit log unavailable: {error}")
-            
+        import streamlit as st
+from api_client import api
+
+
+def payments_page():
+    st.title("Payments & Subscriptions")
+
+    st.subheader("Available Pricing")
+
+    try:
+        pricing = api.get("/api/v1/pricing")
+        st.json(pricing)
+
+    except Exception as error:
+        st.error(f"Pricing unavailable: {error}")
+
+    st.divider()
+    st.subheader("Request Subscription")
+
+    plan = st.text_input(
+        "Plan name",
+        key="subscription_plan",
+    )
+
+    billing_period = st.text_input(
+        "Billing period",
+        key="subscription_billing_period",
+        placeholder="Enter the billing period accepted by your backend",
+    )
+
+    if st.button("Request Subscription"):
+        if not all([plan.strip(), billing_period.strip()]):
+            st.warning("Enter a plan and billing period.")
+        else:
+            try:
+                result = api.post(
+                    "/api/v1/subscriptions/request",
+                    json={
+                        "plan": plan.strip(),
+                        "billing_period": billing_period.strip(),
+                    },
+                )
+
+                st.success("Subscription request submitted.")
+                st.json(result)
+
+            except Exception as error:
+                st.error(str(error))
+
+    st.divider()
+    st.subheader("Request Payment")
+
+    payment_plan = st.text_input(
+        "Payment plan",
+        key="payment_plan",
+    )
+
+    payment_period = st.text_input(
+        "Payment billing period",
+        key="payment_billing_period",
+    )
+
+    implementation = st.checkbox(
+        "Include implementation",
+        key="payment_implementation",
+    )
+
+    if st.button("Submit Payment Request"):
+        if not all([
+            payment_plan.strip(),
+            payment_period.strip(),
+        ]):
+            st.warning("Enter plan and billing period.")
+        else:
+            try:
+                result = api.post(
+                    "/api/v1/payments/request",
+                    json={
+                        "plan": payment_plan.strip(),
+                        "billing_period": payment_period.strip(),
+                        "include_implementation": implementation,
+                    },
+                )
+
+                st.success("Payment request submitted.")
+                st.json(result)
+
+            except Exception as error:
+                st.error(str(error))
+
+    st.divider()
+    st.subheader("Current Subscription")
+
+    if st.button("Load Current Subscription"):
+        try:
+            current = api.get(
+                "/api/v1/subscriptions/current"
+            )
+            st.json(current)
+
+        except Exception as error:
+            st.error(str(error))
+
+    st.divider()
+    st.subheader("Payment History")
+
+    if st.button("Load Payment History"):
+        try:
+            payments = api.get("/api/v1/payments")
+            st.json(payments)
+
+        except Exception as error:
+            st.error(str(error))
+            import streamlit as st
+from api_client import api
+
+
+def settings_page():
+    st.title("Settings")
+
+    user = st.session_state.get("current_user")
+
+    st.subheader("Account")
+
+    if user:
+        st.json(user)
+    else:
+        st.info("No account information loaded.")
+
+    st.divider()
+    st.subheader("Backend Health")
+
+    if st.button("Check Backend Health"):
+        try:
+            health = api.get("/api/v1/health")
+            st.success("Health endpoint responded.")
+            st.json(health)
+
+        except Exception as error:
+            st.error(f"Health check failed: {error}")
+
+    st.divider()
+    st.subheader("Session")
+
+    if st.button("Log Out", type="primary"):
+        api.set_token(None)
+
+        st.session_state["access_token"] = None
+        st.session_state["current_user"] = None
+        st.session_state["active_page"] = "Overview"
+
+        st.success("Logged out.")
+        st.rerun()
