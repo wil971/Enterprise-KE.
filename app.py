@@ -1,282 +1,636 @@
-# ============================================================================
-# ENTERPRISE INTELLIGENCE PLATFORM - ELITE PRODUCTION FRONTEND (APP.PY)
-# ============================================================================
 
-import os
 import streamlit as st
-import requests
+import time
 
-# ----------------------------------------------------------------------------
-# 1. PAGE CONFIGURATION & ENTERPRISE DESIGN SYSTEM
-# ----------------------------------------------------------------------------
+# =========================================================
+# ENTERPRISE-KE.-3
+# PREMIUM KNOWLEDGE INTELLIGENCE FRONTEND
+# PART 1 — APPLICATION FOUNDATION
+# =========================================================
+
 st.set_page_config(
-    page_title="Enterprise Intelligence Platform",
-    page_icon="🛡️",
+    page_title="Enterprise-KE.-3",
+    page_icon="◈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-BACKEND_URL = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "https://enterprise-ke-3.onrender.com")).rstrip("/")
+# ---------------------------------------------------------
+# SESSION STATE
+# ---------------------------------------------------------
+
+defaults = {
+    "active_page": "Overview",
+    "token": None,
+    "user": None,
+    "sidebar_expanded": True,
+    "backend_connected": False,
+}
+
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+# ---------------------------------------------------------
+# DESIGN SYSTEM — PREMIUM DARK INTERFACE
+# ---------------------------------------------------------
 
 st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+<style>
 
-    .stApp { 
-        background-color: #030712;
-        color: #f8fafc;
-        font-family: 'Plus Jakarta Sans', sans-serif;
-    }
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    section[data-testid="stSidebar"] {
-        background-color: #080e1a !important;
-        border-right: 1px solid rgba(30, 41, 59, 0.8) !important;
+:root {
+    --bg: #070B12;
+    --surface: #0D1420;
+    --surface2: #111B2A;
+    --border: rgba(148,163,184,0.12);
+    --text: #F1F5F9;
+    --muted: #94A3B8;
+    --cyan: #38BDF8;
+    --blue: #6366F1;
+    --violet: #8B5CF6;
+    --green: #34D399;
+}
+
+/* GLOBAL */
+
+html, body, [data-testid="stApp"] {
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, sans-serif;
+}
+
+[data-testid="stAppViewContainer"] {
+    background:
+        radial-gradient(
+            ellipse at 75% -10%,
+            rgba(14,165,233,0.12),
+            transparent 40%
+        ),
+        radial-gradient(
+            ellipse at 0% 50%,
+            rgba(99,102,241,0.06),
+            transparent 35%
+        ),
+        var(--bg);
+}
+
+.block-container {
+    max-width: 1550px;
+    padding-top: 1.5rem;
+    padding-bottom: 3rem;
+}
+
+/* SIDEBAR */
+
+[data-testid="stSidebar"] {
+    background: #090F19;
+    border-right: 1px solid var(--border);
+}
+
+[data-testid="stSidebar"] > div:first-child {
+    padding-top: 1.3rem;
+}
+
+[data-testid="stSidebar"] p {
+    color: var(--muted);
+}
+
+/* SIDEBAR BRAND */
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 4px 22px;
+}
+
+.brand-logo {
+    width: 43px;
+    height: 43px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 23px;
+    font-weight: 800;
+    color: white;
+    background: linear-gradient(135deg, #0EA5E9, #6366F1, #8B5CF6);
+    box-shadow: 0 0 28px rgba(56,189,248,0.22);
+}
+
+.brand-title {
+    font-size: 14px;
+    font-weight: 750;
+    color: #F8FAFC;
+}
+
+.brand-subtitle {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: #64748B;
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+
+/* NAVIGATION */
+
+.stButton > button {
+    width: 100%;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.015);
+    border: 1px solid rgba(148,163,184,0.08);
+    color: #B8C5D6;
+    padding: 0.68rem 0.9rem;
+    text-align: left;
+    transition: all 0.22s ease;
+}
+
+.stButton > button:hover {
+    background: rgba(56,189,248,0.08);
+    border-color: rgba(56,189,248,0.25);
+    color: #F8FAFC;
+    transform: translateX(2px);
+}
+
+/* HEADER */
+
+.top-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 0 22px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+}
+
+.header-eyebrow {
+    color: #64748B;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.header-title {
+    color: #F8FAFC;
+    font-size: 24px;
+    font-weight: 750;
+    margin-top: 5px;
+    letter-spacing: -0.04em;
+}
+
+.status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid rgba(56,189,248,0.18);
+    border-radius: 30px;
+    background: rgba(56,189,248,0.05);
+    color: #7DD3FC;
+    font-size: 11px;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #38BDF8;
+    box-shadow: 0 0 10px rgba(56,189,248,0.5);
+}
+
+/* HERO */
+
+.hero {
+    position: relative;
+    overflow: hidden;
+    padding: 30px 0 22px;
+}
+
+.hero-label {
+    color: #38BDF8;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.17em;
+    text-transform: uppercase;
+}
+
+.hero-title {
+    font-size: clamp(34px, 4.5vw, 58px);
+    font-weight: 800;
+    line-height: 1.08;
+    letter-spacing: -0.055em;
+    margin-top: 15px;
+    color: #F8FAFC;
+}
+
+.hero-gradient {
+    background: linear-gradient(
+        90deg,
+        #F8FAFC 0%,
+        #67E8F9 35%,
+        #818CF8 75%,
+        #C4B5FD 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.hero-description {
+    color: #94A3B8;
+    font-size: 14px;
+    line-height: 1.8;
+    max-width: 720px;
+    margin-top: 18px;
+}
+
+/* PANELS */
+
+.surface {
+    background: linear-gradient(
+        145deg,
+        rgba(17,27,42,0.95),
+        rgba(10,16,26,0.97)
+    );
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 23px;
+    transition: all 0.25s ease;
+}
+
+.surface:hover {
+    border-color: rgba(56,189,248,0.22);
+    box-shadow: 0 8px 35px rgba(0,0,0,0.12);
+}
+
+.surface-label {
+    color: #38BDF8;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+}
+
+.surface-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #F1F5F9;
+    margin-top: 12px;
+}
+
+.surface-description {
+    color: #94A3B8;
+    font-size: 13px;
+    line-height: 1.7;
+    margin-top: 9px;
+}
+
+/* FLOATING DECORATION */
+
+.float {
+    animation: floating 6s ease-in-out infinite;
+}
+
+.float-delay {
+    animation: floating 7s ease-in-out infinite;
+    animation-delay: 1.4s;
+}
+
+@keyframes floating {
+    0%, 100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-7px);
+    }
+}
+
+/* FOOTER */
+
+.footer {
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+    margin-top: 48px;
+    color: #526176;
+    font-size: 11px;
+}
+
+/* RESPONSIVE */
+
+@media(max-width: 768px) {
+    .block-container {
+        padding: 1rem;
     }
 
-    .enterprise-card {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(10, 15, 30, 0.95) 100%);
-        border: 1px solid rgba(56, 189, 248, 0.2);
-        border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 10px 30px -10px rgba(2, 132, 199, 0.2);
-        margin-bottom: 16px;
+    .hero-title {
+        font-size: 34px;
     }
 
-    .metric-container {
-        background: rgba(30, 41, 59, 0.5);
-        border: 1px solid rgba(51, 65, 85, 0.8);
-        border-radius: 8px;
-        padding: 12px 16px;
-        text-align: center;
+    .surface {
+        padding: 17px;
     }
 
-    .stTextInput input, .stSelectbox select, .stSlider {
-        background-color: #0b0f19 !important;
-        color: #f8fafc !important;
-        border-radius: 8px !important;
-        border: 1px solid rgba(56, 189, 248, 0.3) !important;
-        padding: 10px 14px !important;
+    .header-title {
+        font-size: 20px;
     }
+}
 
-    .stButton>button {
-        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
-        color: white !important;
-        border: 1px solid rgba(56, 189, 248, 0.5) !important;
-        border-radius: 8px !important;
-        height: 2.75rem;
-        font-weight: 700 !important;
-        box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3);
-    }
-    </style>
+</style>
 """, unsafe_allow_html=True)
 
-# ----------------------------------------------------------------------------
-# 2. SESSION STATE & JWT TOKEN MANAGEMENT
-# ----------------------------------------------------------------------------
-if "access_token" not in st.session_state:
-    st.session_state.access_token = None
-if "tenant_id" not in st.session_state:
-    st.session_state.tenant_id = None
 
-query_params = st.query_params
-if "token" in query_params and not st.session_state.access_token:
-    st.session_state.access_token = query_params["token"]
-    st.session_state.tenant_id = query_params.get("tenant", "tenant_enterprise")
-    st.query_params.clear()
-    st.rerun()
+# ---------------------------------------------------------
+# APPLICATION NAVIGATION
+# ---------------------------------------------------------
 
-def get_auth_headers():
-    return {"Authorization": f"Bearer {st.session_state.access_token}"} if st.session_state.access_token else {}
+workspace_pages = {
+    "Overview": "⌂",
+    "Knowledge Graph": "◈",
+    "Documents": "▤",
+    "AI Intelligence": "✦",
+    "Connectors": "⌘",
+}
 
-# ----------------------------------------------------------------------------
-# 3. ENTERPRISE LOGIN GATEWAY (LOCKED STATE)
-# ----------------------------------------------------------------------------
-if not st.session_state.access_token:
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    _, col_center, _ = st.columns([1, 1.3, 1])
+management_pages = {
+    "Team": "♧",
+    "Payments": "◇",
+    "Settings": "⚙",
+}
 
-    with col_center:
-        st.markdown(
-            """
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <h1 style="font-size: 2.2rem; font-weight: 800; color: #f8fafc; letter-spacing: -1px;">ENTERPRISE INTELLIGENCE</h1>
-                <p style="color: #38bdf8; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 2px; margin-top: 8px;">Multi-Tenant GraphRAG & FastMCP Security Gateway</p>
-            </div>
-            """, 
-            unsafe_allow_html=True
-        )
 
-        st.markdown('<div class="enterprise-card">', unsafe_allow_html=True)
-        st.markdown("<h3 style='color:#f8fafc; font-size:1.1rem; margin-top:0; margin-bottom:10px; font-weight:700; text-align:center;'>Corporate Workspace Authentication</h3>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #94a3b8; font-size: 0.9rem; text-align: center; margin-bottom: 24px;'>Access restricted to verified corporate domains. Automated tenant isolation enabled.</p>", unsafe_allow_html=True)
-        
-        google_login_endpoint = f"{BACKEND_URL}/api/v1/auth/google/login"
-        
-        st.markdown(f"""
-            <div style="text-align: center;">
-                <a href="{google_login_endpoint}" target="_self" style="text-decoration: none;">
-                    <div style="background: #ffffff; color: #0f172a; border: 1px solid #e2e8f0; padding: 13px 20px; border-radius: 8px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-                        <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.95H1.2v3.15C3.18 21.3 7.22 24 12 24z"/><path fill="#FBBC05" d="M5.28 14.25c-.25-.72-.38-1.49-.38-2.25s.13-1.53.38-2.25V6.6H1.2C.43 8.15 0 9.89 0 12s.43 3.85 1.2 5.4l4.08-3.15z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.22 0 3.18 2.7 1.2 6.6l4.08 3.15c.95-2.84 3.6-4.95 6.72-4.95z"/></svg>
-                        Sign in with Google Workspace
-                    </div>
-                </a>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.stop()
+# ---------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------
 
-# ----------------------------------------------------------------------------
-# 4. UNLOCKED EXECUTIVE DASHBOARD (FULL PLATFORM MODULES)
-# ----------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown(f"""
-        <div style="background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(56, 189, 248, 0.3); padding: 16px; border-radius: 10px; margin-bottom: 20px;">
-            <div style="color: #64748b; font-size: 0.65rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; letter-spacing: 1.5px;">ACTIVE TENANT</div>
-            <div style="color: #38bdf8; font-size: 0.9rem; font-weight: 800; margin-top: 4px; word-break: break-all;">{st.session_state.get('tenant_id')}</div>
-            <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(51, 65, 85, 0.6); padding-top: 8px;">
-                <span style="color: #94a3b8; font-size: 0.7rem;">Compliance Tier</span>
-                <span style="color: #10b981; font-size: 0.7rem; font-weight: 700; font-family: 'JetBrains Mono', monospace;">PRO_ENTERPRISE</span>
+
+    st.markdown("""
+    <div class="brand">
+        <div class="brand-logo">◈</div>
+        <div>
+            <div class="brand-title">Enterprise-KE.-3</div>
+            <div class="brand-subtitle">Knowledge Intelligence</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.divider()
+
+    st.caption("WORKSPACE")
+
+    for page, icon in workspace_pages.items():
+
+        if st.button(
+            f"{icon}   {page}",
+            key=f"workspace_{page}",
+        ):
+            st.session_state.active_page = page
+            st.rerun()
+
+    st.divider()
+
+    st.caption("MANAGEMENT")
+
+    for page, icon in management_pages.items():
+
+        if st.button(
+            f"{icon}   {page}",
+            key=f"management_{page}",
+        ):
+            st.session_state.active_page = page
+            st.rerun()
+
+    st.divider()
+
+    st.markdown("""
+    <div style="
+        border:1px solid rgba(148,163,184,0.12);
+        border-radius:13px;
+        padding:14px;
+        background:rgba(255,255,255,0.02);
+    ">
+        <div style="
+            font-size:10px;
+            color:#64748B;
+            letter-spacing:0.12em;
+        ">
+            PLATFORM
+        </div>
+
+        <div style="
+            font-size:13px;
+            font-weight:700;
+            color:#E2E8F0;
+            margin-top:7px;
+        ">
+            Enterprise Intelligence
+        </div>
+
+        <div style="
+            font-size:11px;
+            color:#64748B;
+            margin-top:5px;
+        ">
+            Workspace environment
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# MAIN HEADER
+# ---------------------------------------------------------
+
+active_page = st.session_state.active_page
+
+st.markdown(f"""
+<div class="top-header">
+    <div>
+        <div class="header-eyebrow">Enterprise Workspace</div>
+        <div class="header-title">{active_page}</div>
+    </div>
+
+    <div class="status-pill">
+        <span class="status-dot"></span>
+        Frontend Online
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# OVERVIEW
+# ---------------------------------------------------------
+
+if active_page == "Overview":
+
+    st.markdown("""
+    <div class="hero">
+        <div class="hero-label">
+            Knowledge Intelligence Platform
+        </div>
+
+        <div class="hero-title">
+            Understand your data.<br>
+            <span class="hero-gradient">
+                Connect your knowledge.
+            </span>
+        </div>
+
+        <div class="hero-description">
+            A unified intelligence workspace designed to connect
+            enterprise information, explore relationships, discover
+            insights and transform disconnected data into knowledge.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
+
+    st.markdown("""
+    <div class="surface float">
+        <div class="surface-label">
+            PLATFORM FOUNDATION
+        </div>
+
+        <div class="surface-title">
+            Welcome to your intelligence workspace
+        </div>
+
+        <div class="surface-description">
+            Enterprise-KE.-3 brings documents, connected knowledge,
+            AI intelligence and enterprise data into a unified workspace.
+            Each module will connect directly to your deployed backend.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
+
+    # FEATURE CARDS
+
+    col1, col2 = st.columns(2, gap="large")
+
+    with col1:
+
+        st.markdown("""
+        <div class="surface">
+            <div class="surface-label">01 / KNOWLEDGE</div>
+            <div class="surface-title">Knowledge Graph</div>
+            <div class="surface-description">
+                Navigate connected entities, relationships and
+                organizational knowledge through graph exploration.
             </div>
         </div>
-    """, unsafe_allow_html=True)
-    
-    selected_module = st.radio(
-        "Navigation Menu",
-        ["🔍 Unified Search Engine", "🌐 360° Entity Workspaces", "⚡ FastMCP Tool Console", "🛡️ Tenant Governance & Audits"]
-    )
-    
-    st.markdown("---")
-    if st.button("🚪 Terminate Session", use_container_width=True):
-        st.session_state.access_token = None
-        st.session_state.tenant_id = None
-        st.rerun()
+        """, unsafe_allow_html=True)
 
-# ----------------------------------------------------------------------------
-# MODULE 1: UNIFIED SEARCH & GRAPH RAG
-# ----------------------------------------------------------------------------
-if selected_module == "🔍 Unified Search Engine":
-    st.title("🛡️ Enterprise Context & Intelligence Platform")
-    st.markdown("Glean-grade hybrid vector search and multi-hop graph retrieval engine active.")
-    
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.markdown('<div class="metric-container"><span style="color: #94a3b8; font-size:0.75rem;">INDEXED NODES</span><br><b style="color: #38bdf8; font-size:1.1rem;">128,450</b></div>', unsafe_allow_html=True)
-    with m2:
-        st.markdown('<div class="metric-container"><span style="color: #94a3b8; font-size:0.75rem;">ACL CLEARANCE</span><br><b style="color: #10b981; font-size:1.1rem;">VERIFIED SECURE</b></div>', unsafe_allow_html=True)
-    with m3:
-        st.markdown('<div class="metric-container"><span style="color: #94a3b8; font-size:0.75rem;">LATENCY</span><br><b style="color: #f59e0b; font-size:1.1rem;">42 ms</b></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    query_input = st.text_input("Search connected knowledge sources & workspace graph:", value="OAuth2 security compliance guidelines")
-
-    if st.button("Execute Intelligence Query", type="primary"):
-        with st.spinner("Traversing knowledge graph and analyzing vector embeddings..."):
-            try:
-                response = requests.post(
-                    f"{BACKEND_URL}/api/v1/search",
-                    headers=get_auth_headers(),
-                    json={"query": query_input, "page": 1, "page_size": 10},
-                    timeout=15
-                )
-                if response.status_code == 200:
-                    search_data = response.json()
-                    synth = search_data.get("ai_synthesis", {})
-                    
-                    st.markdown("### AI Executive Synthesis")
-                    st.info(synth.get("summary", "Synthesis generated successfully."))
-                    
-                    st.markdown("### Verified Knowledge Citations & Results")
-                    for item in search_data.get("results", []):
-                        st.markdown(f"""
-                            <div class="enterprise-card">
-                                <h4 style="margin-top:0; color:#38bdf8; font-size:1.05rem;">{item['title']}</h4>
-                                <p style="color:#cbd5e1; font-size:0.9rem; margin-bottom:12px;">{item['snippet']}</p>
-                                <span style="background: rgba(56, 189, 248, 0.1); color: #38bdf8; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;">Source: {item['app']}</span>
-                                <span style="background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; margin-left: 8px;">Score: {item['score']}</span>
-                            </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.error(f"Search request failed: {response.text}")
-            except Exception as e:
-                st.error(f"Search connection error: {str(e)}")
-
-# ----------------------------------------------------------------------------
-# MODULE 2: 360° ENTITY WORKSPACES
-# ----------------------------------------------------------------------------
-elif selected_module == "🌐 360° Entity Workspaces":
-    st.title("🌐 360° Entity Hubs")
-    st.markdown("Inspect unified client accounts, document sandboxes, and expert profiles.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        entity_type = st.selectbox("Entity Type", ["account", "document", "person"])
     with col2:
-        entity_id = st.text_input("Entity ID", value="acme_corp_01")
-        
-    if st.button("Inspect Entity Workspace"):
-        with st.spinner("Fetching secure entity workspace..."):
-            try:
-                res = requests.get(
-                    f"{BACKEND_URL}/api/v1/entities/{entity_type}/{entity_id}",
-                    headers=get_auth_headers(),
-                    timeout=15
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    st.markdown(f"""
-                        <div class="enterprise-card">
-                            <h3 style="color: #38bdf8; margin-top:0;">{data.get('title')}</h3>
-                            <p style="color: #94a3b8; font-size: 0.85rem;">Permissions Verified: <b>{data.get('permissions_verified')}</b></p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    st.markdown("#### Metadata Attributes")
-                    st.json(data.get("metadata", {}))
-                else:
-                    st.error(f"Failed to fetch workspace: {res.text}")
-            except Exception as e:
-                st.error(f"Error: {e}")
 
-# ----------------------------------------------------------------------------
-# MODULE 3: FASTMCP TOOL CONSOLE
-# ----------------------------------------------------------------------------
-elif selected_module == "⚡ FastMCP Tool Console":
-    st.title("⚡ FastMCP Protocol Execution Engine")
-    st.markdown("Execute secure context-aware tool calls via the FastMCP server protocol.")
-    
-    tool_name = st.selectbox("Select FastMCP Tool", ["query_knowledge_graph", "verify_document_permissions", "inspect_tenant_security_posture"])
-    depth_arg = st.slider("Graph Traversal Depth", 1, 5, 2)
-    
-    if st.button("Execute Tool Call"):
-        with st.spinner("Executing FastMCP protocol action..."):
-            try:
-                payload = {"tool_name": tool_name, "arguments": {"depth": depth_arg, "doc_id": "doc_001"}}
-                res = requests.post(f"{BACKEND_URL}/api/v1/fastmcp/execute", headers=get_auth_headers(), json=payload, timeout=15)
-                if res.status_code == 200:
-                    st.success("Tool Execution Successful 🟢")
-                    st.json(res.json())
-                else:
-                    st.error(f"Tool execution failed: {res.text}")
-            except Exception as e:
-                st.error(f"Error: {e}")
+        st.markdown("""
+        <div class="surface float-delay">
+            <div class="surface-label">02 / INTELLIGENCE</div>
+            <div class="surface-title">AI Intelligence</div>
+            <div class="surface-description">
+                Analyze information, ask questions and discover
+                intelligence across your knowledge environment.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-# ----------------------------------------------------------------------------
-# MODULE 4: TENANT GOVERNANCE & AUDIT LOGS
-# ----------------------------------------------------------------------------
-elif selected_module == "🛡️ Tenant Governance & Audits":
-    st.title("🛡️ Tenant Governance & Cryptographic Audits")
-    st.markdown("Verify audit trail integrity and inspect compliance postures using HMAC-SHA256 signature validation.")
-    
-    if st.button("Verify Audit Log Cryptographic Chain"):
-        with st.spinner("Evaluating HMAC audit signatures..."):
-            try:
-                res = requests.get(f"{BACKEND_URL}/api/v1/admin/audit-logs/verify", headers=get_auth_headers(), timeout=15)
-                if res.status_code == 200:
-                    data = res.json()
-                    st.success("Audit verification completed successfully.")
-                    st.json(data)
-                else:
-                    st.error(f"Audit verification failed: {res.text}")
-            except Exception as e:
-                st.error(f"Error: {e}")
+    st.write("")
+
+    col3, col4 = st.columns(2, gap="large")
+
+    with col3:
+
+        st.markdown("""
+        <div class="surface float-delay">
+            <div class="surface-label">03 / KNOWLEDGE BASE</div>
+            <div class="surface-title">Documents</div>
+            <div class="surface-description">
+                Upload, organize, retrieve and analyze
+                your enterprise information.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col4:
+
+        st.markdown("""
+        <div class="surface">
+            <div class="surface-label">04 / INTEGRATIONS</div>
+            <div class="surface-title">Connectors</div>
+            <div class="surface-description">
+                Connect external information sources and
+                bring your data into a unified workspace.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# MODULE ROUTING — TEMPORARY FOUNDATION
+# MODULES WILL BE REPLACED WITH FUNCTIONAL PAGES
+# ---------------------------------------------------------
+
+elif active_page != "Overview":
+
+    descriptions = {
+        "Knowledge Graph":
+            "Explore entities, relationships and connected knowledge.",
+        "Documents":
+            "Upload, organize and retrieve enterprise documents.",
+        "AI Intelligence":
+            "AI-powered analysis and intelligent knowledge workflows.",
+        "Connectors":
+            "Connect and manage external enterprise data sources.",
+        "Team":
+            "Workspace members, collaboration and invitations.",
+        "Payments":
+            "Subscriptions, payment requests and billing.",
+        "Settings":
+            "Account, workspace and platform configuration.",
+    }
+
+    st.markdown(f"""
+    <div class="surface">
+        <div class="surface-label">WORKSPACE MODULE</div>
+
+        <div class="surface-title" style="font-size:24px;">
+            {active_page}
+        </div>
+
+        <div class="surface-description">
+            {descriptions.get(active_page, "Workspace module")}
+        </div>
+
+        <div style="
+            margin-top:22px;
+            padding:14px;
+            border-radius:12px;
+            background:rgba(56,189,248,0.04);
+            border:1px solid rgba(56,189,248,0.10);
+            color:#94A3B8;
+            font-size:12px;
+        ">
+            Module foundation initialized.
+            Functional integration will be added in the
+            upcoming development components.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------
+# FOOTER
+# ---------------------------------------------------------
+
+st.markdown("""
+<div class="footer">
+    ENTERPRISE-KE.-3 &nbsp;·&nbsp;
+    KNOWLEDGE INTELLIGENCE PLATFORM
+</div>
+""", unsafe_allow_html=True)
     
