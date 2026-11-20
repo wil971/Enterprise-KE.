@@ -742,4 +742,49 @@ def intelligence_page():
 
         except Exception as error:
             st.error(f"Search failed: {error}")
+            import streamlit as st
+from api_client import api
+
+
+def graph_page():
+    st.title("Knowledge Graph")
+    st.caption("Explore document relationships and graph data.")
+
+    st.subheader("Graph Documents")
+
+    try:
+        graph_documents = api.get(
+            "/api/v1/graph/documents"
+        )
+
+    except Exception as error:
+        st.error(f"Graph documents unavailable: {error}")
+        return
+
+    st.write("Documents available for graph exploration")
+    st.json(graph_documents)
+
+    st.divider()
+    st.subheader("Explore a Document")
+
+    document_id = st.text_input(
+        "Document ID",
+        placeholder="Enter the document ID to explore",
+    )
+
+    if st.button("Explore Graph"):
+        if not document_id.strip():
+            st.warning("Enter a document ID.")
+            return
+
+        try:
+            graph = api.get(
+                f"/api/v1/graph/explore/{document_id.strip()}"
+            )
+
+            st.subheader("Exploration Result")
+            st.json(graph)
+
+        except Exception as error:
+            st.error(f"Graph exploration failed: {error}")
             
