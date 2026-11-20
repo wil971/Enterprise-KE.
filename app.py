@@ -633,4 +633,461 @@ st.markdown("""
     KNOWLEDGE INTELLIGENCE PLATFORM
 </div>
 """, unsafe_allow_html=True)
-    
+
+
+# =========================================================
+# ENTERPRISE-KE.-3
+# PART 2 — BACKEND API SERVICE
+# File: frontend/services/api.py
+# =========================================================
+
+import os
+import requests
+import streamlit as st
+from typing import Any, Optional
+
+
+# ---------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------
+
+DEFAULT_BACKEND_URL = "https://enterprise-ke-3.onrender.com"
+
+
+def get_backend_url() -> str:
+    """
+    Reads backend URL from Streamlit secrets or environment.
+    Falls back to the deployed Enterprise-KE.-3 backend.
+    """
+
+    try:
+        configured_url = st.secrets.get("BACKEND_URL", "")
+    except Exception:
+        configured_url = ""
+
+    configured_url = (
+        configured_url
+        or os.getenv("BACKEND_URL")
+        or DEFAULT_BACKEND_URL
+    )
+
+    return configured_url.rstrip("/")
+
+
+BASE_URL = get_backend_url()
+
+
+# ---------------------------------------------------------
+# TOKEN MANAGEMENT
+# ---------------------------------------------------------
+
+def get_token() -> Optional[str]:
+    """Return the current session authentication token."""
+
+    return st.session_state.get("token")
+
+
+def set_token(token: Optional[str]) -> None:
+    """Set or clear the authentication token."""
+
+    st.session_state["token"] = token
+
+
+def clear_authentication() -> None:
+    """Clear current authentication state."""
+
+    st.session_state["token"] = None
+    st.session_state["user"] = None
+
+
+# ---------------------------------------------------------
+# REQUEST HEADERS
+# ---------------------------------------------------------
+
+def get_headers(
+    extra_headers: Optional[dict] = None
+) -> dict:
+
+    headers = {
+        "Accept": "application/json",
+    }
+
+    token = get_token()
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    if extra_headers:
+        headers.update(extra_headers)
+
+    return headers
+
+
+# ---------------------------------------------------------
+# RESPONSE HANDLING
+# ---------------------------------------------------------
+
+def parse_response(response: requests.Response) -> Any:
+    """
+    Parses backend responses.
+    Raises a readable exception for failed requests.
+    """
+
+    try:
+        data = response.json()
+    except ValueError:
+        data = response.text
+
+    if not response.ok:
+
+        if isinstance(data, dict):
+            detail = (
+                data.get("detail")
+                or data.get("message")
+                or data.get("error")
+                or str(data)
+            )
+        else:
+            detail = str(data)
+
+        raise APIError(
+            message=str(detail),
+            status_code=response.status_code,
+            response_data=data,
+        )
+
+    return data
+
+
+# ---------------------------------------------------------
+# CUSTOM API ERROR
+# ---------------------------------------------------------
+
+class APIError(Exception):
+
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        response_data: Any = None,
+    ):
+
+        self.message = message
+        self.status_code = status_code
+        self.response_data = response_data
+
+        super().__init__(message)
+
+
+# ---------------------------------------------------------
+# REQUEST ENGINE
+# ---------------------------------------------------------
+
+def request(
+    method: str,
+    endpoint: str,
+    *,
+    params: Optional[dict] = None,
+    json_data: Optional[dict] = None,
+    data: Optional[dict] = None,
+    files: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = 45,
+    authenticated: bool = True,
+) -> Any:
+    """
+    Central request engine used by all frontend modules.
+
+    Supports:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+    - JSON
+    - Form data
+    - File uploads
+    - Bearer authentication
+    """
+
+    endpoint = endpoint.lstrip("/")
+    url = f"{BASE_URL}/{endpoint}"
+
+    request_headers = {}
+
+    if authenticated:
+        request_headers.update(get_headers())
+
+    if headers:
+        request_headers.update(headers)
+
+    # Let requests generate multipart headers for file uploads.
+    if files:
+        request_headers.pop("Content-Type", None)
+
+    try:
+
+        response = requests.request(
+            method=method.upper(),
+            url=url,
+            params=params,
+            json=json_data,
+            data=data,
+            files=files,
+            headers=request_headers,
+            timeout=timeout,
+        )
+
+        return parse_response(response)
+
+    except requests.Timeout as exc:
+
+        raise APIError(
+            "The backend request timed out. "
+            "The service may be waking up or processing a request."
+        ) from exc
+
+    except requests.ConnectionError as exc:
+
+        raise APIError(
+            "Unable to connect to the Enterprise-KE.-3 backend. "
+            "Check the backend deployment and internet connection."
+        ) from exc
+
+    except requests.RequestException as exc:
+
+        raise APIError(
+            f"Network request failed: {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------
+# HTTP METHODS
+# ---------------------------------------------------------
+
+def get(
+    endpoint: str,
+    *,
+    params: Optional[dict] = None,
+    authenticated: bool = True,
+    timeout: int = 45,
+):
+    return request(
+        "GET",
+        endpoint,
+        params=params,
+        authenticated=authenticated,
+        timeout=timeout,
+    )
+
+
+def post(
+    endpoint: str,
+    *,
+    json_data: Optional[dict] = None,
+    data: Optional[dict] = None,
+    files: Optional[dict] = None,
+    authenticated: bool = True,
+    timeout: int = 60,
+):
+    return request(
+        "POST",
+        endpoint,
+        json_data=json_data,
+        data=data,
+        files=files,
+        authenticated=authenticated,
+        timeout=timeout,
+    )
+
+
+def put(
+    endpoint: str,
+    *,
+    json_data: Optional[dict] = None,
+    authenticated: bool = True,
+    timeout: int = 45,
+):
+    return request(
+        "PUT",
+        endpoint,
+        json_data=json_data,
+        authenticated=authenticated,
+        timeout=timeout,
+    )
+
+
+def patch(
+    endpoint: str,
+    *,
+    json_data: Optional[dict] = None,
+    authenticated: bool = True,
+    timeout: int = 45,
+):
+    return request(
+        "PATCH",
+        endpoint,
+        json_data=json_data,
+        authenticated=authenticated,
+        timeout=timeout,
+    )
+
+
+def delete(
+    endpoint: str,
+    *,
+    authenticated: bool = True,
+    timeout: int = 45,
+):
+    return request(
+        "DELETE",
+        endpoint,
+        authenticated=authenticated,
+        timeout=timeout,
+    )
+
+
+# ---------------------------------------------------------
+# FILE UPLOAD
+# ---------------------------------------------------------
+
+def upload_file(
+    endpoint: str,
+    uploaded_file,
+    *,
+    extra_data: Optional[dict] = None,
+    authenticated: bool = True,
+    timeout: int = 120,
+):
+    """
+    Uploads a Streamlit UploadedFile object.
+
+    The file is sent as multipart/form-data.
+    """
+
+    file_payload = {
+        "file": (
+            uploaded_file.name,
+            uploaded_file.getvalue(),
+            uploaded_file.type or "application/octet-stream",
+        )
+    }
+
+    return request(
+        "POST",
+        endpoint,
+        data=extra_data,
+        files=file_payload,
+        authenticated=authenticated,
+        timeout=timeout,
+    )
+
+
+# ---------------------------------------------------------
+# BACKEND HEALTH
+# ---------------------------------------------------------
+
+def health_check() -> dict:
+    """
+    Checks the backend health endpoints.
+    """
+
+    endpoints = [
+        "/api/v1/health",
+        "/health",
+    ]
+
+    last_error = None
+
+    for endpoint in endpoints:
+
+        try:
+
+            response = requests.get(
+                f"{BASE_URL}{endpoint}",
+                timeout=15,
+            )
+
+            if response.ok:
+
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {"response": response.text}
+
+                return {
+                    "connected": True,
+                    "endpoint": endpoint,
+                    "data": payload,
+                    "url": BASE_URL,
+                }
+
+            last_error = (
+                f"Health endpoint returned HTTP "
+                f"{response.status_code}"
+            )
+
+        except requests.RequestException as exc:
+            last_error = str(exc)
+
+    return {
+        "connected": False,
+        "endpoint": None,
+        "data": None,
+        "url": BASE_URL,
+        "error": last_error or "Health check failed",
+    }
+
+
+# ---------------------------------------------------------
+# AUTHENTICATION HELPERS
+# ---------------------------------------------------------
+
+def login(email: str, password: str):
+    """
+    Sends login request to the backend.
+
+    Actual response fields will be mapped in the
+    authentication module after verifying the API schema.
+    """
+
+    return post(
+        "/api/v1/auth/login",
+        data={
+            "username": email,
+            "password": password,
+        },
+        authenticated=False,
+    )
+
+
+def register(
+    email: str,
+    password: str,
+    name: str,
+):
+    """
+    Account registration helper.
+    """
+
+    return post(
+        "/api/v1/auth/register",
+        json_data={
+            "email": email,
+            "password": password,
+            "name": name,
+        },
+        authenticated=False,
+    )
+
+
+def get_current_user():
+    """
+    Retrieve the authenticated user.
+    """
+
+    return get(
+        "/api/v1/auth/me",
+        authenticated=True,
+)
+
