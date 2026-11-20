@@ -856,4 +856,112 @@ def connectors_page():
 
         except Exception as error:
             st.error(f"Ingestion failed: {error}")
+            import streamlit as st
+from api_client import api
+
+
+def team_page():
+    st.title("Team Management")
+
+    st.subheader("Workspace Members")
+
+    try:
+        members = api.get("/api/v1/team")
+        st.json(members)
+
+    except Exception as error:
+        st.error(f"Team list unavailable: {error}")
+
+    st.divider()
+    st.subheader("Invite a Member")
+
+    invite_email = st.text_input(
+        "Email address",
+        key="invite_email",
+    )
+
+    role = st.selectbox(
+        "Role",
+        ["member", "viewer"],
+        key="invite_role",
+    )
+
+    if st.button("Send Invitation"):
+        if not invite_email.strip():
+            st.warning("Enter an email address.")
+            return
+
+        try:
+            result = api.post(
+                "/api/v1/team/invitations",
+                json={
+                    "email": invite_email.strip(),
+                    "role": role,
+                },
+            )
+
+            st.success("Invitation request completed.")
+            st.json(result)
+
+        except Exception as error:
+            st.error(f"Invitation failed: {error}")
+
+    st.divider()
+    st.subheader("Accept an Invitation")
+
+    invitation_token = st.text_input(
+        "Invitation token",
+        key="accept_invitation_token",
+    )
+
+    full_name = st.text_input(
+        "Your full name",
+        key="accept_invitation_name",
+    )
+
+    new_password = st.text_input(
+        "Create password (minimum 12 characters)",
+        type="password",
+        key="accept_invitation_password",
+    )
+
+    if st.button("Accept Invitation"):
+        if not all([
+            invitation_token.strip(),
+            full_name.strip(),
+            new_password,
+        ]):
+            st.warning("Complete all fields.")
+            return
+
+        if len(new_password) < 12:
+            st.warning("Password must be at least 12 characters.")
+            return
+
+        try:
+            result = api.post(
+                "/api/v1/team/invitations/accept",
+                json={
+                    "token": invitation_token.strip(),
+                    "full_name": full_name.strip(),
+                    "password": new_password,
+                },
+            )
+
+            st.success("Invitation acceptance request completed.")
+            st.json(result)
+
+        except Exception as error:
+            st.error(f"Invitation acceptance failed: {error}")
+
+
+def audit_page():
+    st.title("Audit Log")
+
+    try:
+        audit = api.get("/api/v1/audit")
+        st.json(audit)
+
+    except Exception as error:
+        st.error(f"Audit log unavailable: {error}")
             
