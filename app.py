@@ -1,5 +1,4 @@
-import streamlit as st
-
+(import streamlit as st
 st.set_page_config(
     page_title="Enterprise KE",
     page_icon="◈",
@@ -561,3 +560,49 @@ def auth_page():
 
     with register_tab:
         register_form()
+        import streamlit as st
+from api_client import api
+
+
+def dashboard_page():
+    st.title("Enterprise Overview")
+
+    try:
+        data = api.get("/api/v1/dashboard")
+        usage = api.get("/api/v1/usage")
+
+    except Exception as error:
+        st.error(f"Dashboard unavailable: {error}")
+        return
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Documents", data.get("documents", 0))
+    col2.metric("Team Members", data.get("users", 0))
+    col3.metric("Audit Events", data.get("audit_events", 0))
+
+    st.divider()
+
+    st.subheader("Workspace Information")
+
+    st.write("Tenant ID:", data.get("tenant_id", "Unavailable"))
+    st.write("Backend:", data.get("backend_url", "Unavailable"))
+    st.write("Generated:", data.get("generated_at", "Unavailable"))
+
+    st.divider()
+
+    st.subheader("Subscription & Usage")
+
+    st.write("Plan:", usage.get("plan", "Unavailable"))
+
+    usage_values = usage.get("usage", {})
+    limits = usage.get("limits", {})
+
+    for key, value in usage_values.items():
+        limit = limits.get(key)
+
+        st.write(key.replace("_", " ").title(), value, "/", limit)
+
+        if isinstance(value, (int, float)):
+            if isinstance(limit, (int, float)) and limit > 0:
+                st.progress(min(value / limit, 1.0))
