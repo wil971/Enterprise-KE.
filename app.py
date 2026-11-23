@@ -605,7 +605,7 @@ def dashboard_page():
             if isinstance(limit, (int, float)) and limit > 0:
                 st.progress(min(value / limit, 1.0))
 import streamlit as st
-from api_client import api
+
 
 ALLOWED_TYPES = ["pdf", "docx", "txt", "csv"]
 
@@ -697,7 +697,6 @@ def documents_page():
                     except Exception as error:
                         st.error(str(error))
                         import streamlit as st
-from api_client import api
 
 
 def intelligence_page():
@@ -741,7 +740,6 @@ def intelligence_page():
         except Exception as error:
             st.error(f"Search failed: {error}")
             import streamlit as st
-from api_client import api
 
 
 def graph_page():
