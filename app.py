@@ -443,7 +443,6 @@ class APIClient:
 
 api = APIClient()
 import streamlit as st
-from api_client import api_client
 
 
 def login_form():
