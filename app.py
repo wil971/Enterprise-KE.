@@ -1,1112 +1,246 @@
+
+# ============================================================
+# ENTERPRISE-KE | PART 1 — CORE FOUNDATION
+# ============================================================
+
 import streamlit as st
+import requests
+import pandas as pd
+import json
+import uuid
+import re
+import time
+import math
+from datetime import datetime, timezone
+from typing import Any, Optional, Dict, List
+
 st.set_page_config(
-    page_title="Enterprise KE",
-    page_icon="◈",
+    page_title="Enterprise-KE",
+    page_icon="✦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-# SESSION STATE
-defaults = {
-    "active_page": "Overview",
+APP_NAME = "Enterprise-KE"
+APP_VERSION = "3.0.0"
+API_BASE_URL = "https://enterprise-ke-3.onrender.com"
+API_TIMEOUT = 25
+
+COLORS = {
+    "bg": "#080B12",
+    "surface": "#101622",
+    "surface2": "#151D2B",
+    "border": "#263144",
+    "text": "#F2F5FA",
+    "muted": "#8995A8",
+    "accent": "#7C8CFF",
+    "accent2": "#48D6C6",
+    "danger": "#FF657A",
+    "warning": "#FFC66E",
+    "success": "#55D6A5"
+}
+
+STATE_DEFAULTS = {
+    "authenticated": False,
     "access_token": None,
-    "current_user": None,
-    "backend_status": "Not checked",
+    "user": None,
+    "current_page": "Overview",
+    "search_query": "",
+    "search_results": [],
+    "documents": [],
+    "collections": [],
+    "team": [],
+    "notifications": [],
+    "chat_messages": [],
+    "connectors": [],
+    "selected_document": None,
+    "selected_collection": None,
+    "api_status": "unknown",
+    "api_error": None,
+    "loading": False,
+    "notice": None,
+    "filters": {},
+    "last_refresh": None
 }
 
-for key, value in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+def initialize_session_state():
+    for key, value in STATE_DEFAULTS.items():
+        if key not in st.session_state:
+            st.session_state[key] = (
+                json.loads(json.dumps(value))
+                if isinstance(value, (dict, list))
+                else value
+            )
 
+initialize_session_state()
 
-# DESIGN SYSTEM
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+def set_notice(message, kind="info"):
+    st.session_state.notice = {
+        "message": str(message),
+        "kind": kind,
+        "time": time.time()
+    }
 
-:root {
-    --bg: #080b12;
-    --panel: #111722;
-    --border: rgba(148,163,184,.14);
-    --text: #e8edf5;
-    --muted: #8c9aaf;
-    --cyan: #67e8f9;
-    --purple: #818cf8;
-}
+def clear_notice():
+    st.session_state.notice = None
 
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
-}
+def api_call(method, endpoint, params=None, payload=None,
+              files=None, timeout=API_TIMEOUT):
+    """Central API request handler."""
+    headers = {}
 
-.stApp {
-    background:
-        radial-gradient(ellipse at 10% 0%,
-        rgba(70,90,180,.14), transparent 40%),
-        radial-gradient(ellipse at 95% 35%,
-        rgba(0,200,220,.07), transparent 35%),
-        var(--bg);
-    color: var(--text);
-}
+    token = st.session_state.get("access_token")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
-.block-container {
-    max-width: 1450px;
-    padding-top: 2rem;
-    padding-bottom: 3rem;
-}
+    url = f"{API_BASE_URL.rstrip('/')}/{endpoint.lstrip('/')}"
 
-h1, h2, h3 {
-    font-family: 'Manrope', sans-serif !important;
-    letter-spacing: -.035em;
-}
+    try:
+        response = requests.request(
+            method=method.upper(),
+            url=url,
+            headers=headers,
+            params=params,
+            json=payload,
+            files=files,
+            timeout=timeout
+        )
 
-section[data-testid="stSidebar"] {
-    background: #0b1019;
-    border-right: 1px solid var(--border);
-}
+        try:
+            data = response.json()
+        except Exception:
+            data = {"detail": response.text[:2000]}
 
-.stButton > button {
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: linear-gradient(135deg,
-        rgba(99,102,241,.17),
-        rgba(34,211,238,.09));
-    color: var(--text);
-    font-weight: 600;
-    transition: all .25s ease;
-}
+        return {
+            "ok": response.ok,
+            "status": response.status_code,
+            "data": data,
+            "error": None if response.ok else data
+        }
 
-.stButton > button:hover {
-    border-color: rgba(103,232,249,.5);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(34,211,238,.1);
-}
+    except requests.RequestException as exc:
+        return {
+            "ok": False,
+            "status": 0,
+            "data": None,
+            "error": str(exc)
+        }
 
-[data-testid="stMetric"] {
-    background: rgba(17,23,34,.82);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 18px;
-}
+def api_get(endpoint, params=None):
+    return api_call("GET", endpoint, params=params)
 
-[data-testid="stMetric"]:hover {
-    transform: translateY(-3px);
-}
+def api_post(endpoint, payload=None):
+    return api_call("POST", endpoint, payload=payload)
 
-.module-card {
-    background: rgba(17,23,34,.8);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: 22px;
-    min-height: 145px;
-    transition: all .3s ease;
-}
+def api_delete(endpoint):
+    return api_call("DELETE", endpoint)
 
-.module-card:hover {
-    background: #151e2b;
-    border-color: rgba(103,232,249,.3);
-    transform: translateY(-4px);
-}
+def safe_list(value):
+    return value if isinstance(value, list) else []
 
-.module-title {
-    font-size: 17px;
-    font-weight: 700;
-    margin-bottom: 8px;
-}
+def safe_dict(value):
+    return value if isinstance(value, dict) else {}
 
-.module-desc {
-    color: #91a0b6;
-    font-size: 13px;
-    line-height: 1.6;
-}
+def format_datetime(value):
+    if not value:
+        return "—"
+    try:
+        return str(value).replace("T", " ")[:19]
+    except Exception:
+        return "—"
 
-.hero {
-    background: linear-gradient(120deg,
-        rgba(99,102,241,.16),
-        rgba(34,211,238,.08));
-    border: 1px solid var(--border);
-    border-radius: 24px;
-    padding: 30px;
-    transition: .3s ease;
-}
-
-.hero:hover {
-    border-color: rgba(103,232,249,.3);
-    transform: translateY(-2px);
-}
-
-.pill {
-    display: inline-block;
-    border-radius: 999px;
-    padding: 5px 11px;
-    font-size: 11px;
-    font-weight: 700;
-    background: rgba(99,102,241,.15);
-    border: 1px solid rgba(99,102,241,.25);
-    color: #a5b4fc;
-}
-
-.ambient {
-    position: fixed;
-    width: 330px;
-    height: 330px;
-    border-radius: 50%;
-    filter: blur(100px);
-    opacity: .12;
-    pointer-events: none;
-    z-index: 0;
-}
-
-.ambient-a {
-    background: #6366f1;
-    top: -100px;
-    left: 18%;
-    animation: drift-a 18s ease-in-out infinite alternate;
-}
-
-.ambient-b {
-    background: #22d3ee;
-    bottom: -130px;
-    right: 12%;
-    animation: drift-b 23s ease-in-out infinite alternate;
-}
-
-@keyframes drift-a {
-    from { transform: translate(0,0); }
-    to { transform: translate(130px,90px); }
-}
-
-@keyframes drift-b {
-    from { transform: translate(0,0); }
-    to { transform: translate(-100px,-80px); }
-}
-
-div[data-testid="stExpander"] {
-    border: 1px solid var(--border);
-    border-radius: 14px;
-}
-
-hr {
-    border-color: var(--border);
-}
-</style>
-
-<div class="ambient ambient-a"></div>
-<div class="ambient ambient-b"></div>
-""", unsafe_allow_html=True)
-
-
-# NAVIGATION
-PAGES = [
-    "Overview",
-    "Knowledge Graph",
-    "Documents",
-    "AI Intelligence",
-    "Connectors",
-    "Team",
-    "Payments",
-    "Settings",
-]
-
-ICONS = {
-    "Overview": "◈",
-    "Knowledge Graph": "◎",
-    "Documents": "▤",
-    "AI Intelligence": "✧",
-    "Connectors": "⌘",
-    "Team": "♙",
-    "Payments": "◇",
-    "Settings": "⚙",
-}
-
-
-def render_sidebar():
-    with st.sidebar:
-        st.markdown("""
-        <div style="padding:12px 4px 22px;">
-            <div style="font-size:25px;font-weight:800;">
-                <span style="color:#67e8f9;">ENTERPRISE</span>
-                <span style="color:#818cf8;"> KE</span>
-            </div>
-            <div style="color:#8391a7;font-size:11px;
-                letter-spacing:2px;margin-top:5px;">
-                KNOWLEDGE INTELLIGENCE
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.caption("WORKSPACE")
-
-        for page in PAGES:
-            if st.button(
-                f"{ICONS[page]}   {page}",
-                key=f"nav_{page}",
-                use_container_width=True,
-            ):
-                st.session_state.active_page = page
-                st.rerun()
-
-        st.divider()
-
-        st.caption("PLATFORM")
-
-        st.markdown("""
-        <div style="color:#8c9aaf;font-size:12px;padding:8px;">
-            Enterprise Knowledge Platform
-        </div>
-        """, unsafe_allow_html=True)
-
-
-# HEADER
-def render_header():
-    page = st.session_state.active_page
-
-    st.markdown(
-        f"""
-        <div style="margin-bottom:24px;">
-            <div style="color:#8c9aaf;font-size:12px;
-                letter-spacing:1.5px;">
-                ENTERPRISE WORKSPACE
-            </div>
-            <div style="font-size:25px;font-weight:800;
-                margin-top:5px;">
-                {page}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# OVERVIEW
-def render_overview():
+def inject_base_style():
     st.markdown("""
-    <div class="hero">
-        <div class="pill">KNOWLEDGE INTELLIGENCE PLATFORM</div>
+    <style>
+    :root {
+        --ek-bg: #080B12;
+        --ek-surface: #101622;
+        --ek-surface2: #151D2B;
+        --ek-border: #263144;
+        --ek-text: #F2F5FA;
+        --ek-muted: #8995A8;
+        --ek-accent: #7C8CFF;
+        --ek-teal: #48D6C6;
+    }
 
-        <h1 style="margin-top:18px;font-size:36px;">
-            Your knowledge.<br>
-            <span style="color:#67e8f9;">
-                Connected intelligently.
-            </span>
-        </h1>
+    .stApp {
+        background:
+          radial-gradient(ellipse at 10% 0%,
+          rgba(124,140,255,.10), transparent 35%),
+          var(--ek-bg);
+        color: var(--ek-text);
+    }
 
-        <p style="color:#9aa8bc;max-width:700px;
-            font-size:15px;line-height:1.8;">
-            Organize enterprise documents, discover connections,
-            explore knowledge relationships and manage your
-            workspace from one unified platform.
-        </p>
-    </div>
+    html, body, [class*="css"] {
+        font-family: Inter, system-ui, sans-serif;
+    }
+
+    h1, h2, h3, h4 {
+        letter-spacing: -0.035em;
+    }
+
+    div[data-testid="stMetric"] {
+        background: rgba(16,22,34,.75);
+        border: 1px solid var(--ek-border);
+        padding: 16px;
+        border-radius: 16px;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: var(--ek-text);
+    }
+
+    .ek-card {
+        background: linear-gradient(
+            145deg,
+            rgba(21,29,43,.95),
+            rgba(12,17,26,.92)
+        );
+        border: 1px solid var(--ek-border);
+        border-radius: 18px;
+        padding: 20px;
+        transition: .25s ease;
+    }
+
+    .ek-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(124,140,255,.45);
+        box-shadow: 0 12px 35px rgba(0,0,0,.20);
+    }
+
+    .ek-muted {
+        color: var(--ek-muted);
+    }
+
+    .ek-pill {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(124,140,255,.12);
+        border: 1px solid rgba(124,140,255,.25);
+    }
+
+    button, [role="button"] {
+        transition: .2s ease !important;
+    }
+
+    @media (max-width: 768px) {
+        .ek-card {
+            padding: 14px;
+            border-radius: 14px;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        * {
+            transition: none !important;
+            animation: none !important;
+        }
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    st.write("")
-    st.subheader("Platform Modules")
+inject_base_style()
 
-    modules = [
-        ("Knowledge Graph",
-         "Explore relationships between documents and knowledge entities."),
-        ("Documents",
-         "Upload and manage your organization's knowledge files."),
-        ("AI Intelligence",
-         "Search your knowledge base using natural-language queries."),
-        ("Connectors",
-         "Bring external content into your knowledge workspace."),
-        ("Team",
-         "Manage workspace members and invitations."),
-        ("Payments",
-         "View plans and payment requests for your subscription."),
-    ]
-
-    columns = st.columns(3)
-
-    for i, (name, description) in enumerate(modules):
-        with columns[i % 3]:
-            st.markdown(
-                f"""
-                <div class="module-card">
-                    <div class="module-title">{name}</div>
-                    <div class="module-desc">{description}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            st.write("")
-
-            if st.button(
-                f"Open {name}",
-                key=f"open_{name}",
-                use_container_width=True,
-            ):
-                st.session_state.active_page = name
-                st.rerun()
-
-
-# PLACEHOLDER PAGES
-def render_placeholder(page):
-    st.markdown("""
-    <div class="hero">
-        <div class="pill">MODULE FRAMEWORK</div>
-        <h2 style="margin-top:15px;">Module framework ready</h2>
-        <p style="color:#9aa8bc;">
-            This module will be connected to its real backend
-            functionality during the next development parts.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ROUTING
-def render_page():
-    page = st.session_state.active_page
-
-    if page == "Overview":
-        render_overview()
-    else:
-        render_placeholder(page)
-
-
-# APP START
-render_sidebar()
-render_header()
-render_page()
-
-import requests
-
-BASE_URL = "https://enterprise-ke-3.onrender.com"
-
-
-class APIClient:
-    def __init__(self):
-        self.token = None
-
-    def set_token(self, token):
-        self.token = token
-
-    def headers(self):
-        result = {}
-
-        if self.token:
-            result["Authorization"] = f"Bearer {self.token}"
-
-        return result
-
-    def request(self, method, path, **kwargs):
-        try:
-            response = requests.request(
-                method,
-                f"{BASE_URL}{path}",
-                headers=self.headers(),
-                timeout=60,
-                **kwargs,
-            )
-
-            if response.status_code == 204:
-                return None
-
-            try:
-                data = response.json()
-            except ValueError:
-                data = {"detail": response.text}
-
-            if not response.ok:
-                raise RuntimeError(
-                    str(data.get("detail", "Request failed"))
-                )
-
-            return data
-
-        except requests.exceptions.Timeout:
-            raise RuntimeError("Backend request timed out.")
-
-        except requests.exceptions.ConnectionError:
-            raise RuntimeError("Backend connection failed.")
-
-    def get(self, path, **kwargs):
-        return self.request("GET", path, **kwargs)
-
-    def post(self, path, **kwargs):
-        return self.request("POST", path, **kwargs)
-
-    def upload(self, path, file):
-        return self.post(
-            path,
-            files={
-                "file": (
-                    file.name,
-                    file.getvalue(),
-                    getattr(file, "type", "application/octet-stream"),
-                )
-            },
-        )
-
-
-api = APIClient()
-import streamlit as st
-
-
-def login_form():
-    st.subheader("Sign in")
-
-    email = st.text_input("Email", key="login_email")
-    password = st.text_input(
-        "Password",
-        type="password",
-        key="login_password",
-    )
-
-    if st.button("Sign in", key="login_submit"):
-        if not email or not password:
-            st.warning("Enter your email and password.")
-            return
-
-        try:
-            result = api.post(
-                "/api/v1/auth/login",
-                json={
-                    "email": email,
-                    "password": password,
-                },
-            )
-
-            token = result["access_token"]
-
-            api.set_token(token)
-            st.session_state["access_token"] = token
-            st.session_state["current_user"] = result["user"]
-
-            st.success("Signed in successfully.")
-            st.rerun()
-
-        except Exception as error:
-            st.error(str(error))
-
-
-def register_form():
-    st.subheader("Create enterprise account")
-
-    organization = st.text_input(
-        "Organization name",
-        key="reg_organization",
-    )
-
-    full_name = st.text_input(
-        "Full name",
-        key="reg_full_name",
-    )
-
-    email = st.text_input(
-        "Email address",
-        key="reg_email",
-    )
-
-    password = st.text_input(
-        "Password (minimum 12 characters)",
-        type="password",
-        key="reg_password",
-    )
-
-    confirm = st.text_input(
-        "Confirm password",
-        type="password",
-        key="reg_confirm",
-    )
-
-    if st.button("Create account", key="reg_submit"):
-        if not all([organization, full_name, email, password]):
-            st.warning("Please complete all fields.")
-            return
-
-        if len(password) < 12:
-            st.warning("Password must be at least 12 characters.")
-            return
-
-        if password != confirm:
-            st.warning("Passwords do not match.")
-            return
-
-        try:
-            result = api.post(
-                "/api/v1/auth/register",
-                json={
-                    "organization_name": organization,
-                    "full_name": full_name,
-                    "email": email,
-                    "password": password,
-                },
-            )
-
-            token = result["access_token"]
-
-            api.set_token(token)
-            st.session_state["access_token"] = token
-            st.session_state["current_user"] = result["user"]
-
-            st.success("Account created.")
-            st.rerun()
-
-        except Exception as error:
-            st.error(str(error))
-
-
-def auth_page():
-    login_tab, register_tab = st.tabs(
-        ["Sign In", "Create Account"]
-    )
-
-    with login_tab:
-        login_form()
-
-    with register_tab:
-        register_form()
-        import streamlit as st
-
-
-def dashboard_page():
-    st.title("Enterprise Overview")
-
-    try:
-        data = api.get("/api/v1/dashboard")
-        usage = api.get("/api/v1/usage")
-
-    except Exception as error:
-        st.error(f"Dashboard unavailable: {error}")
-        return
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Documents", data.get("documents", 0))
-    col2.metric("Team Members", data.get("users", 0))
-    col3.metric("Audit Events", data.get("audit_events", 0))
-
-    st.divider()
-
-    st.subheader("Workspace Information")
-
-    st.write("Tenant ID:", data.get("tenant_id", "Unavailable"))
-    st.write("Backend:", data.get("backend_url", "Unavailable"))
-    st.write("Generated:", data.get("generated_at", "Unavailable"))
-
-    st.divider()
-
-    st.subheader("Subscription & Usage")
-
-    st.write("Plan:", usage.get("plan", "Unavailable"))
-
-    usage_values = usage.get("usage", {})
-    limits = usage.get("limits", {})
-
-    for key, value in usage_values.items():
-        limit = limits.get(key)
-
-        st.write(key.replace("_", " ").title(), value, "/", limit)
-
-        if isinstance(value, (int, float)):
-            if isinstance(limit, (int, float)) and limit > 0:
-                st.progress(min(value / limit, 1.0))
-import streamlit as st
-
-
-ALLOWED_TYPES = ["pdf", "docx", "txt", "csv"]
-
-
-def documents_page():
-    st.title("Knowledge Documents")
-    st.caption("Upload, review, and manage workspace documents.")
-
-    st.subheader("Upload document")
-
-    uploaded_file = st.file_uploader(
-        "Choose a file",
-        type=ALLOWED_TYPES,
-        key="document_upload",
-    )
-
-    if uploaded_file:
-        st.write("Selected:", uploaded_file.name)
-
-        if st.button("Upload Document", key="upload_document_btn"):
-            try:
-                result = api.upload(
-                    "/api/v1/documents/upload",
-                    uploaded_file,
-                )
-                st.success("Upload request completed.")
-                st.json(result)
-
-            except Exception as error:
-                st.error(str(error))
-
-    st.divider()
-    st.subheader("Stored documents")
-
-    try:
-        result = api.get("/api/v1/documents")
-
-    except Exception as error:
-        st.error(f"Could not load documents: {error}")
-        return
-
-    if isinstance(result, list):
-        documents = result
-    elif isinstance(result, dict):
-        documents = result.get(
-            "documents",
-            result.get("items", []),
-        )
-    else:
-        documents = []
-
-    if not documents:
-        st.info("No documents returned.")
-        return
-
-    for document in documents:
-        doc_id = (
-            document.get("id")
-            or document.get("document_id")
-            or ""
-        )
-        name = (
-            document.get("filename")
-            or document.get("name")
-            or "Untitled document"
-        )
-
-        with st.expander(name):
-            st.write("Document ID:", doc_id)
-
-            for key, value in document.items():
-                if key not in ("id", "document_id", "filename", "name"):
-                    st.write(
-                        key.replace("_", " ").title(),
-                        value,
-                    )
-
-            if doc_id:
-                if st.button(
-                    "View details",
-                    key=f"document_details_{doc_id}",
-                ):
-                    try:
-                        detail = api.get(
-                            f"/api/v1/documents/{doc_id}"
-                        )
-                        st.json(detail)
-
-                    except Exception as error:
-                        st.error(str(error))
-                        import streamlit as st
-
-
-def intelligence_page():
-    st.title("AI Intelligence")
-    st.caption("Search your connected enterprise knowledge.")
-
-    query = st.text_area(
-        "What do you want to find?",
-        placeholder="Enter a question or search query...",
-        max_chars=1000,
-    )
-
-    limit = st.slider(
-        "Results limit",
-        min_value=1,
-        max_value=100,
-        value=20,
-    )
-
-    if st.button("Search Knowledge", type="primary"):
-        if not query.strip():
-            st.warning("Enter a search query.")
-            return
-
-        if len(query.strip()) < 2:
-            st.warning("Query must be at least 2 characters.")
-            return
-
-        try:
-            results = api.post(
-                "/api/v1/search",
-                json={
-                    "query": query.strip(),
-                    "limit": limit,
-                },
-            )
-
-            st.subheader("Search Results")
-            st.json(results)
-
-        except Exception as error:
-            st.error(f"Search failed: {error}")
-            import streamlit as st
-
-
-def graph_page():
-    st.title("Knowledge Graph")
-    st.caption("Explore document relationships and graph data.")
-
-    st.subheader("Graph Documents")
-
-    try:
-        graph_documents = api.get(
-            "/api/v1/graph/documents"
-        )
-
-    except Exception as error:
-        st.error(f"Graph documents unavailable: {error}")
-        return
-
-    st.write("Documents available for graph exploration")
-    st.json(graph_documents)
-
-    st.divider()
-    st.subheader("Explore a Document")
-
-    document_id = st.text_input(
-        "Document ID",
-        placeholder="Enter the document ID to explore",
-    )
-
-    if st.button("Explore Graph"):
-        if not document_id.strip():
-            st.warning("Enter a document ID.")
-            return
-
-        try:
-            graph = api.get(
-                f"/api/v1/graph/explore/{document_id.strip()}"
-            )
-
-            st.subheader("Exploration Result")
-            st.json(graph)
-
-        except Exception as error:
-            st.error(f"Graph exploration failed: {error}")
-            import streamlit as st
-
-
-
-def connectors_page():
-    st.title("Connectors")
-    st.caption("Manage integrations and ingest external content.")
-
-    st.subheader("Connector Status")
-
-    try:
-        connector_data = api.get(
-            "/api/v1/connectors"
-        )
-        st.json(connector_data)
-
-    except Exception as error:
-        st.error(f"Connector status unavailable: {error}")
-
-    st.divider()
-    st.subheader("Ingest External Content")
-
-    connector = st.text_input(
-        "Connector name",
-        placeholder="Example: manual",
-    )
-
-    external_id = st.text_input(
-        "External ID",
-        placeholder="Unique source record ID",
-    )
-
-    filename = st.text_input(
-        "Filename",
-        placeholder="document.txt",
-    )
-
-    content = st.text_area(
-        "Content",
-        height=250,
-        placeholder="Paste the content to ingest...",
-    )
-
-    if st.button("Ingest Content"):
-        if not all([
-            connector.strip(),
-            external_id.strip(),
-            filename.strip(),
-            content.strip(),
-        ]):
-            st.warning("Complete all fields.")
-            return
-
-        try:
-            result = api.post(
-                "/api/v1/connectors/ingest",
-                json={
-                    "connector": connector.strip(),
-                    "external_id": external_id.strip(),
-                    "filename": filename.strip(),
-                    "content": content,
-                },
-            )
-
-            st.success("Ingestion request completed.")
-            st.json(result)
-
-        except Exception as error:
-            st.error(f"Ingestion failed: {error}")
-            import streamlit as st
-
-
-def team_page():
-    st.title("Team Management")
-
-    st.subheader("Workspace Members")
-
-    try:
-        members = api.get("/api/v1/team")
-        st.json(members)
-
-    except Exception as error:
-        st.error(f"Team list unavailable: {error}")
-
-    st.divider()
-    st.subheader("Invite a Member")
-
-    invite_email = st.text_input(
-        "Email address",
-        key="invite_email",
-    )
-
-    role = st.selectbox(
-        "Role",
-        ["member", "viewer"],
-        key="invite_role",
-    )
-
-    if st.button("Send Invitation"):
-        if not invite_email.strip():
-            st.warning("Enter an email address.")
-            return
-
-        try:
-            result = api.post(
-                "/api/v1/team/invitations",
-                json={
-                    "email": invite_email.strip(),
-                    "role": role,
-                },
-            )
-
-            st.success("Invitation request completed.")
-            st.json(result)
-
-        except Exception as error:
-            st.error(f"Invitation failed: {error}")
-
-    st.divider()
-    st.subheader("Accept an Invitation")
-
-    invitation_token = st.text_input(
-        "Invitation token",
-        key="accept_invitation_token",
-    )
-
-    full_name = st.text_input(
-        "Your full name",
-        key="accept_invitation_name",
-    )
-
-    new_password = st.text_input(
-        "Create password (minimum 12 characters)",
-        type="password",
-        key="accept_invitation_password",
-    )
-
-    if st.button("Accept Invitation"):
-        if not all([
-            invitation_token.strip(),
-            full_name.strip(),
-            new_password,
-        ]):
-            st.warning("Complete all fields.")
-            return
-
-        if len(new_password) < 12:
-            st.warning("Password must be at least 12 characters.")
-            return
-
-        try:
-            result = api.post(
-                "/api/v1/team/invitations/accept",
-                json={
-                    "token": invitation_token.strip(),
-                    "full_name": full_name.strip(),
-                    "password": new_password,
-                },
-            )
-
-            st.success("Invitation acceptance request completed.")
-            st.json(result)
-
-        except Exception as error:
-            st.error(f"Invitation acceptance failed: {error}")
-
-
-def audit_page():
-    st.title("Audit Log")
-
-    try:
-        audit = api.get("/api/v1/audit")
-        st.json(audit)
-
-    except Exception as error:
-        st.error(f"Audit log unavailable: {error}")
-        import streamlit as st
-
-
-def payments_page():
-    st.title("Payments & Subscriptions")
-
-    st.subheader("Available Pricing")
-
-    try:
-        pricing = api.get("/api/v1/pricing")
-        st.json(pricing)
-
-    except Exception as error:
-        st.error(f"Pricing unavailable: {error}")
-
-    st.divider()
-    st.subheader("Request Subscription")
-
-    plan = st.text_input(
-        "Plan name",
-        key="subscription_plan",
-    )
-
-    billing_period = st.text_input(
-        "Billing period",
-        key="subscription_billing_period",
-        placeholder="Enter the billing period accepted by your backend",
-    )
-
-    if st.button("Request Subscription"):
-        if not all([plan.strip(), billing_period.strip()]):
-            st.warning("Enter a plan and billing period.")
-        else:
-            try:
-                result = api.post(
-                    "/api/v1/subscriptions/request",
-                    json={
-                        "plan": plan.strip(),
-                        "billing_period": billing_period.strip(),
-                    },
-                )
-
-                st.success("Subscription request submitted.")
-                st.json(result)
-
-            except Exception as error:
-                st.error(str(error))
-
-    st.divider()
-    st.subheader("Request Payment")
-
-    payment_plan = st.text_input(
-        "Payment plan",
-        key="payment_plan",
-    )
-
-    payment_period = st.text_input(
-        "Payment billing period",
-        key="payment_billing_period",
-    )
-
-    implementation = st.checkbox(
-        "Include implementation",
-        key="payment_implementation",
-    )
-
-    if st.button("Submit Payment Request"):
-        if not all([
-            payment_plan.strip(),
-            payment_period.strip(),
-        ]):
-            st.warning("Enter plan and billing period.")
-        else:
-            try:
-                result = api.post(
-                    "/api/v1/payments/request",
-                    json={
-                        "plan": payment_plan.strip(),
-                        "billing_period": payment_period.strip(),
-                        "include_implementation": implementation,
-                    },
-                )
-
-                st.success("Payment request submitted.")
-                st.json(result)
-
-            except Exception as error:
-                st.error(str(error))
-
-    st.divider()
-    st.subheader("Current Subscription")
-
-    if st.button("Load Current Subscription"):
-        try:
-            current = api.get(
-                "/api/v1/subscriptions/current"
-            )
-            st.json(current)
-
-        except Exception as error:
-            st.error(str(error))
-
-    st.divider()
-    st.subheader("Payment History")
-
-    if st.button("Load Payment History"):
-        try:
-            payments = api.get("/api/v1/payments")
-            st.json(payments)
-
-        except Exception as error:
-            st.error(str(error))
-            import streamlit as st
-
-
-def settings_page():
-    st.title("Settings")
-
-    user = st.session_state.get("current_user")
-
-    st.subheader("Account")
-
-    if user:
-        st.json(user)
-    else:
-        st.info("No account information loaded.")
-
-    st.divider()
-    st.subheader("Backend Health")
-
-    if st.button("Check Backend Health"):
-        try:
-            health = api.get("/api/v1/health")
-            st.success("Health endpoint responded.")
-            st.json(health)
-
-        except Exception as error:
-            st.error(f"Health check failed: {error}")
-
-    st.divider()
-    st.subheader("Session")
-
-    if st.button("Log Out", type="primary"):
-        api.set_token(None)
-
-        st.session_state["access_token"] = None
-        st.session_state["current_user"] = None
-        st.session_state["active_page"] = "Overview"
-
-        st.success("Logged out.")
-        st.rerun()
+# Part 1 complete — foundational configuration
