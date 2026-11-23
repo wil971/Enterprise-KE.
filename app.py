@@ -244,3 +244,179 @@ def inject_base_style():
 inject_base_style()
 
 # Part 1 complete — foundational configuration
+# PART 2 — APPLICATION STATE MODEL
+
+APP_STATE = {
+    "workspace": None,
+    "user": None,
+    "permissions": [],
+    "route": "overview",
+    "search": {
+        "query": "",
+        "filters": {},
+        "results": [],
+        "cursor": None,
+    },
+    "documents": {},
+    "entities": {},
+    "relationships": {},
+    "collections": {},
+    "conversations": {},
+    "connectors": {},
+    "notifications": [],
+    "activity": [],
+    "ui": {
+        "sidebar_open": True,
+        "active_panel": None,
+        "selected_document": None,
+        "selected_entity": None,
+    },
+}
+
+
+def get_state(path, default=None):
+    current = APP_STATE
+
+    for key in path.split("."):
+        if not isinstance(current, dict):
+            return default
+
+        current = current.get(key)
+
+        if current is None:
+            return default
+
+    return current
+
+
+def set_state(path, value):
+    keys = path.split(".")
+    current = APP_STATE
+
+    for key in keys[:-1]:
+        current = current.setdefault(key, {})
+
+    current[keys[-1]] = value
+
+
+def reset_state():
+    APP_STATE.clear()
+    APP_STATE.update(
+        json.loads(json.dumps(APP_STATE))
+    )# PART 3 — SCHEMA REGISTRY
+
+SCHEMAS = {
+    "document": {
+        "required": ["id", "title"],
+        "fields": [
+            "id", "title", "content", "source",
+            "mime_type", "owner", "permissions",
+            "created_at", "updated_at", "metadata",
+        ],
+    },
+    "person": {
+        "required": ["id", "name"],
+        "fields": [
+            "id", "name", "email", "department",
+            "role", "manager_id", "metadata",
+        ],
+    },
+    "entity": {
+        "required": ["id", "label", "type"],
+        "fields": [
+            "id", "label", "type", "description",
+            "properties", "source_ids",
+        ],
+    },
+    "relationship": {
+        "required": ["id", "source", "target", "type"],
+        "fields": [
+            "id", "source", "target", "type",
+            "weight", "properties",
+        ],
+    },
+}
+
+
+def validate_object(object_type, data):
+    schema = SCHEMAS.get(object_type)
+
+    if not schema:
+        return False, "Unknown object type"
+
+    if not isinstance(data, dict):
+        return False, "Object must be a dictionary"
+
+    missing = [
+        field
+        for field in schema["required"]
+        if field not in data
+    ]
+
+    if missing:
+        return False, f"Missing fields: {missing}"
+
+    unknown = [
+        field
+        for field in data
+        if field not in schema["fields"]
+    ]
+
+    if unknown:
+        return False, f"Unknown fields: {unknown}"
+
+    return True, None# PART 4 — DATA ADAPTERS
+
+class DataAdapter:
+
+    def list_items(self, **filters):
+        raise NotImplementedError
+
+    def get_item(self, item_id):
+        raise NotImplementedError
+
+    def create_item(self, payload):
+        raise NotImplementedError
+
+    def update_item(self, item_id, payload):
+        raise NotImplementedError
+
+    def delete_item(self, item_id):
+        raise NotImplementedError
+
+
+class BackendAdapter(DataAdapter):
+
+    def __init__(self, api_client):
+        self.api = api_client
+
+    def list_items(self, endpoint, **filters):
+        return self.api.get(
+            endpoint,
+            params=filters,
+        )
+
+    def get_item(self, endpoint, item_id):
+        return self.api.get(
+            f"{endpoint}/{item_id}"
+        )
+
+    def create_item(self, endpoint, payload):
+        return self.api.post(
+            endpoint,
+            json_body=payload,
+        )
+
+    def update_item(self, endpoint, item_id, payload):
+        return self.api.patch(
+            f"{endpoint}/{item_id}",
+            json_body=payload,
+        )
+
+    def delete_item(self, endpoint, item_id):
+        return self.api.delete(
+            f"{endpoint}/{item_id}"
+        )
+
+
+DATA_ADAPTER = BackendAdapter(api)
