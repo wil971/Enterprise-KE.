@@ -810,4 +810,265 @@ def available_pages():
             or has_permission(page["permission"])
         )
     ]
+# ============================================================
+# PART 11 — PREMIUM MOTION DESIGN SYSTEM
+# ============================================================
 
+def inject_premium_motion():
+
+    st.markdown("""
+    <style>
+
+    :root {
+        --ek-bg: #F6F7FB;
+        --ek-surface: #FFFFFF;
+        --ek-primary: #6657E8;
+        --ek-primary-light: #8B80FF;
+        --ek-text: #202238;
+        --ek-muted: #8589A0;
+        --ek-border: #E9EAF2;
+        --ek-radius: 18px;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(
+                ellipse at 15% 0%,
+                rgba(111,92,255,.055),
+                transparent 40%
+            ),
+            #F6F7FB;
+    }
+
+    @keyframes ekFadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes ekFloat {
+        0%, 100% {
+            transform: translateY(0px);
+        }
+        50% {
+            transform: translateY(-5px);
+        }
+    }
+
+    @keyframes ekPulse {
+        0%, 100% {
+            opacity: .65;
+        }
+        50% {
+            opacity: 1;
+        }
+    }
+
+    @keyframes ekGlow {
+        0%, 100% {
+            box-shadow: 0 0 0 rgba(102,87,232,0);
+        }
+        50% {
+            box-shadow: 0 0 24px rgba(102,87,232,.12);
+        }
+    }
+
+    @keyframes ekShimmer {
+        0% {
+            background-position: -500px 0;
+        }
+        100% {
+            background-position: 500px 0;
+        }
+    }
+
+    .ek-animate-in {
+        animation: ekFadeIn .45s ease both;
+    }
+
+    .ek-float {
+        animation: ekFloat 5s ease-in-out infinite;
+    }
+
+    .ek-glow {
+        animation: ekGlow 4s ease-in-out infinite;
+    }
+
+    .ek-premium-card {
+        background: rgba(255,255,255,.88);
+        backdrop-filter: blur(18px);
+        border: 1px solid rgba(226,228,240,.9);
+        border-radius: 18px;
+        box-shadow:
+            0 4px 18px rgba(32,35,68,.035),
+            0 1px 3px rgba(32,35,68,.025);
+        transition:
+            transform .24s ease,
+            box-shadow .24s ease,
+            border-color .24s ease;
+    }
+
+    .ek-premium-card:hover {
+        transform: translateY(-3px);
+        box-shadow:
+            0 15px 36px rgba(32,35,68,.075);
+        border-color: #D8D5FF;
+    }
+
+    .ek-premium-button {
+        transition:
+            transform .18s ease,
+            box-shadow .18s ease,
+            background .18s ease;
+    }
+
+    .ek-premium-button:hover {
+        transform: translateY(-1px);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+            animation-duration: .01ms !important;
+            transition-duration: .01ms !important;
+        }
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
+    # ============================================================
+# PART 12 — AMBIENT BACKGROUND
+# ============================================================
+
+def render_ambient_background():
+
+    st.markdown("""
+    <div style="
+        position:fixed;
+        top:-140px;
+        right:-130px;
+        width:380px;
+        height:380px;
+        background:radial-gradient(
+            circle,
+            rgba(118,102,255,.10),
+            transparent 70%
+        );
+        border-radius:50%;
+        pointer-events:none;
+        z-index:0;
+    "></div>
+
+    <div style="
+        position:fixed;
+        bottom:-180px;
+        left:160px;
+        width:420px;
+        height:420px;
+        background:radial-gradient(
+            circle,
+            rgba(76,175,255,.065),
+            transparent 70%
+        );
+        border-radius:50%;
+        pointer-events:none;
+        z-index:0;
+    "></div>
+    """, unsafe_allow_html=True)
+
+
+def render_animated_accent():
+
+    st.markdown("""
+    <div class="ek-float" style="
+        display:inline-flex;
+        width:42px;
+        height:42px;
+        align-items:center;
+        justify-content:center;
+        border-radius:14px;
+        color:white;
+        font-size:20px;
+        background:linear-gradient(
+            135deg,#8174FF,#5140D6
+        );
+        box-shadow:
+            0 8px 22px rgba(95,78,220,.22);
+    ">
+        ✦
+    </div>
+    """, unsafe_allow_html=True)# ============================================================
+# PART 13 — PREMIUM WORKSPACE BAR
+# ============================================================
+
+def render_premium_workspace_bar():
+
+    st.markdown("""
+    <div class="ek-premium-card" style="
+        padding:12px 18px;
+        margin-bottom:16px;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+    ">
+
+        <div style="
+            display:flex;
+            align-items:center;
+            gap:10px;
+        ">
+
+            <div style="
+                height:32px;
+                width:32px;
+                border-radius:10px;
+                background:linear-gradient(
+                    135deg,#8275FF,#5948DB
+                );
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                color:white;
+                font-size:15px;
+            ">
+                ✳
+            </div>
+
+            <div>
+                <div style="
+                    font-size:12px;
+                    font-weight:750;
+                    color:#292B43;
+                ">
+                    Enterprise KE
+                </div>
+
+                <div style="
+                    font-size:9px;
+                    color:#85899C;
+                ">
+                    Knowledge Intelligence Workspace
+                </div>
+            </div>
+
+        </div>
+
+        <div style="
+            padding:6px 10px;
+            background:#F1F0FF;
+            color:#6555DC;
+            border-radius:20px;
+            font-size:10px;
+            font-weight:700;
+        ">
+            WORKSPACE
+        </div>
+
+    </div>
+    """, unsafe_allow_html=True)
