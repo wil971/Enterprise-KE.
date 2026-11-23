@@ -960,7 +960,6 @@ def audit_page():
     except Exception as error:
         st.error(f"Audit log unavailable: {error}")
         import streamlit as st
-from api_client import api
 
 
 def payments_page():
