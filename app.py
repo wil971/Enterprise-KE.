@@ -419,4 +419,139 @@ class BackendAdapter(DataAdapter):
         )
 
 
-DATA_ADAPTER = BackendAdapter(api)
+DATA_ADAPTER = BackendAdapter(api)# PART 5 — ACCESS CONTROL
+
+def has_permission(permission):
+    permissions = APP_STATE.get("permissions", [])
+
+    return (
+        permission in permissions
+        or "*" in permissions
+    )
+
+
+def can_view_document(document):
+    if not isinstance(document, dict):
+        return False
+
+    permissions = document.get("permissions")
+
+    if permissions is None:
+        return has_permission("documents.read")
+
+    return has_permission("documents.read")
+
+
+def can_edit_document(document):
+    return (
+        has_permission("documents.edit")
+        and can_view_document(document)
+    )
+
+
+def can_manage_workspace():
+    return has_permission("workspace.manage")
+
+
+def require_permission(permission):
+    if not has_permission(permission):
+        st.error("You don't have permission for this action.")
+        return False
+
+    return True# PART 6 — KNOWLEDGE GRAPH
+
+class KnowledgeGraph:
+
+    def __init__(self):
+        self.nodes = {}
+        self.edges = {}
+
+    def add_node(self, node):
+        valid, error = validate_object(
+            "entity", node
+        )
+
+        if not valid:
+            raise ValueError(error)
+
+        self.nodes[node["id"]] = node
+
+    def add_edge(self, edge):
+        valid, error = validate_object(
+            "relationship", edge
+        )
+
+        if not valid:
+            raise ValueError(error)
+
+        self.edges[edge["id"]] = edge
+
+    def get_node(self, node_id):
+        return self.nodes.get(node_id)
+
+    def neighbors(self, node_id):
+        results = []
+
+        for edge in self.edges.values():
+
+            if edge["source"] == node_id:
+                results.append(edge["target"])
+
+            elif edge["target"] == node_id:
+                results.append(edge["source"])
+
+        return results
+
+    def clear(self):
+        self.nodes.clear()
+        self.edges.clear()
+
+
+knowledge_graph = KnowledgeGraph()# PART 7 — SEARCH MODEL
+
+SEARCH_FIELDS = [
+    "query",
+    "source",
+    "document_type",
+    "owner",
+    "date_range",
+    "department",
+]
+
+
+def build_search_request():
+    search_state = APP_STATE["search"]
+
+    return {
+        "query": search_state["query"],
+        "filters": search_state["filters"],
+        "cursor": search_state["cursor"],
+    }
+
+
+def update_search_query(query):
+    APP_STATE["search"]["query"] = query
+
+
+def update_search_filter(name, value):
+    APP_STATE["search"]["filters"][name] = value
+
+
+def clear_search_filters():
+    APP_STATE["search"]["filters"] = {}
+
+
+def execute_search():
+
+    request_data = build_search_request()
+
+    if not request_data["query"].strip():
+        return None
+
+    response = api.get(
+        "/api/v1/search",
+        params=request_data,
+    )
+
+    return response
+
