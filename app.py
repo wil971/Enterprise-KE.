@@ -560,7 +560,6 @@ def auth_page():
     with register_tab:
         register_form()
         import streamlit as st
-from api_client import api
 
 
 def dashboard_page():
