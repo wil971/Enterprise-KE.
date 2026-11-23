@@ -554,4 +554,260 @@ def execute_search():
     )
 
     return response
+    # PART 8 — SOURCE LINEAGE
+
+class SourceRegistry:
+
+    def __init__(self):
+        self.sources = {}
+
+    def register(self, source):
+        source_id = source.get("id")
+
+        if not source_id:
+            raise ValueError(
+                "Source requires an ID"
+            )
+
+        self.sources[source_id] = source
+
+    def get(self, source_id):
+        return self.sources.get(source_id)
+
+    def resolve_many(self, source_ids):
+        return [
+            self.sources[source_id]
+            for source_id in source_ids
+            if source_id in self.sources
+        ]
+
+    def clear(self):
+        self.sources.clear()
+
+
+source_registry = SourceRegistry()
+
+
+def extract_response_sources(response):
+    if not isinstance(response, dict):
+        return []
+
+    source_ids = response.get("source_ids", [])
+
+    return source_registry.resolve_many(
+        source_ids
+    )# PART 9 — APPLICATION EVENTS
+
+EVENT_HANDLERS = {}
+
+
+def subscribe(event_name, handler):
+
+    EVENT_HANDLERS.setdefault(
+        event_name, []
+    ).append(handler)
+
+
+def dispatch(event_name, payload=None):
+
+    payload = payload or {}
+
+    handlers = EVENT_HANDLERS.get(
+        event_name, []
+    )
+
+    results = []
+
+    for handler in handlers:
+        results.append(
+            handler(payload)
+        )
+
+    return results
+
+
+def on_search_requested(payload):
+
+    query = payload.get("query", "")
+
+    update_search_query(query)
+
+    return query
+
+
+def on_document_selected(payload):
+
+    document_id = payload.get(
+        "document_id"
+    )
+
+    APP_STATE["ui"][
+        "selected_document"
+    ] = document_id
+
+    return document_id
+
+
+subscribe(
+    "search.requested",
+    on_search_requested,
+)
+
+subscribe(
+    "document.selected",
+    on_document_selected,
+)# PART 10 — PAGE REGISTRY
+
+PAGE_REGISTRY = {}
+
+
+def register_page(
+    page_id,
+    title,
+    description,
+    icon,
+    permission=None,
+):
+    PAGE_REGISTRY[page_id] = {
+        "id": page_id,
+        "title": title,
+        "description": description,
+        "icon": icon,
+        "permission": permission,
+    }
+
+
+register_page(
+    "overview",
+    "Overview",
+    "Your knowledge workspace",
+    "◈",
+)
+
+register_page(
+    "search",
+    "Search",
+    "Discover enterprise knowledge",
+    "⌕",
+    "search.read",
+)
+
+register_page(
+    "documents",
+    "Documents",
+    "Explore organizational content",
+    "▤",
+    "documents.read",
+)
+
+register_page(
+    "graph",
+    "Knowledge Graph",
+    "Explore connected knowledge",
+    "◎",
+    "graph.read",
+)
+
+register_page(
+    "assistant",
+    "AI Workspace",
+    "Work with enterprise knowledge",
+    "✦",
+    "assistant.use",
+)
+
+register_page(
+    "collections",
+    "Collections",
+    "Organize important resources",
+    "▦",
+)
+
+register_page(
+    "team",
+    "Team",
+    "People and team management",
+    "♙",
+    "team.read",
+)
+
+register_page(
+    "connectors",
+    "Connectors",
+    "Manage connected data sources",
+    "⇄",
+    "connectors.read",
+)
+
+register_page(
+    "activity",
+    "Activity",
+    "Workspace activity and audit history",
+    "◷",
+    "activity.read",
+)
+
+register_page(
+    "analytics",
+    "Analytics",
+    "Usage and knowledge insights",
+    "▥",
+    "analytics.read",
+)
+
+register_page(
+    "billing",
+    "Billing",
+    "Plans, payments and subscriptions",
+    "◇",
+    "billing.read",
+)
+
+register_page(
+    "settings",
+    "Settings",
+    "Workspace preferences",
+    "⚙",
+)
+
+register_page(
+    "admin",
+    "Administration",
+    "Administrative controls",
+    "⌘",
+    "admin.read",
+)
+
+
+def get_page(page_id):
+    return PAGE_REGISTRY.get(page_id)
+
+
+def navigate_to(page_id):
+
+    if page_id not in PAGE_REGISTRY:
+        return False
+
+    page = PAGE_REGISTRY[page_id]
+
+    permission = page.get("permission")
+
+    if permission and not has_permission(permission):
+        return False
+
+    APP_STATE["route"] = page_id
+
+    return True
+
+
+def available_pages():
+
+    return [
+        page
+        for page in PAGE_REGISTRY.values()
+        if (
+            not page["permission"]
+            or has_permission(page["permission"])
+        )
+    ]
 
