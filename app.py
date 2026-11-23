@@ -784,7 +784,7 @@ def graph_page():
         except Exception as error:
             st.error(f"Graph exploration failed: {error}")
             import streamlit as st
-from api_client import api
+
 
 
 def connectors_page():
@@ -853,7 +853,6 @@ def connectors_page():
         except Exception as error:
             st.error(f"Ingestion failed: {error}")
             import streamlit as st
-from api_client import api
 
 
 def team_page():
@@ -1074,7 +1073,6 @@ def payments_page():
         except Exception as error:
             st.error(str(error))
             import streamlit as st
-from api_client import api
 
 
 def settings_page():
