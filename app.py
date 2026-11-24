@@ -1355,3 +1355,300 @@ def render_premium_metric(
         """,
         unsafe_allow_html=True,
     )
+# ============================================================
+# PART 17 — LOADING SKELETONS
+# ============================================================
+
+def render_skeleton(
+    rows=3,
+    height=15,
+):
+
+    for _ in range(rows):
+
+        st.markdown(
+            f"""
+            <div style="
+                height:{height}px;
+                border-radius:8px;
+                margin-bottom:11px;
+                background:linear-gradient(
+                    90deg,
+                    #F0F1F6 25%,
+                    #E7E9F2 50%,
+                    #F0F1F6 75%
+                );
+                background-size:1000px 100%;
+                animation:ekShimmer 1.8s infinite linear;
+            "></div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_loading_panel(
+    message="Loading workspace...",
+):
+
+    st.markdown(
+        f"""
+        <div class="ek-premium-card"
+             style="
+                padding:25px;
+                text-align:center;
+             ">
+
+            <div class="ek-float"
+                 style="
+                    font-size:26px;
+                    color:#7264E8;
+                    margin-bottom:10px;
+                 ">
+                ✦
+            </div>
+
+            <div style="
+                font-size:12px;
+                color:#73778D;
+            ">
+                {message}
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_loading_documents():
+
+    for _ in range(3):
+
+        with st.container(border=True):
+
+            render_skeleton(
+                rows=2,
+                height=12,
+)
+            # ============================================================
+# PART 18 — INTERACTIVE FILTER CHIPS
+# ============================================================
+
+def render_filter_chips(
+    label,
+    options,
+    state_key,
+):
+
+    st.markdown(
+        f"""
+        <div style="
+            font-size:11px;
+            color:#777D91;
+            font-weight:650;
+            margin-bottom:7px;
+        ">
+            {label}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    selected = st.session_state.get(
+        state_key,
+        "All",
+    )
+
+    if selected not in options:
+        selected = options[0]
+
+    selection = st.radio(
+        label,
+        options,
+        index=options.index(selected),
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"chip_selector_{state_key}",
+    )
+
+    st.session_state[state_key] = selection
+
+    return selection
+
+
+def render_filter_row():
+
+    left, right = st.columns(
+        [4, 1]
+    )
+
+    with left:
+
+        selected = render_filter_chips(
+            "Content type",
+            [
+                "All",
+                "Documents",
+                "People",
+                "Collections",
+            ],
+            "active_content_filter",
+        )
+
+    with right:
+
+        st.markdown(
+            "<div style='height:20px'></div>",
+            unsafe_allow_html=True,
+        )
+
+        if st.button(
+            "Reset",
+            key="reset_filter_chips",
+        ):
+
+            st.session_state.active_content_filter = "All"
+
+            st.rerun()
+
+    return selected
+    # ============================================================
+# PART 19 — DOCUMENT PREVIEW COMPONENT
+# ============================================================
+
+def document_type_icon(document):
+
+    mime_type = (
+        document.get("mime_type")
+        or document.get("file_type")
+        or ""
+    ).lower()
+
+    if "pdf' in mime_type:
+        return "▧"
+
+    if "spreadsheet" in mime_type or "excel" in mime_type:
+        return "▦"
+
+    if "presentation" in mime_type:
+        return "▣"
+
+    if "image" in mime_type:
+        return "▧"
+
+    return "▤"
+
+
+def render_document_preview_card(document):
+
+    document_id = document.get("id")
+
+    title = (
+        document.get("title")
+        or document.get("filename")
+        or "Untitled document"
+    )
+
+    description = (
+        document.get("description")
+        or document.get("snippet")
+        or ""
+    )
+
+    source = (
+        document.get("source")
+        or document.get("source_name")
+        or "Source unavailable"
+    )
+
+    updated = (
+        document.get("updated_at")
+        or document.get("created_at")
+        or ""
+    )
+
+    icon = document_type_icon(document)
+
+    st.markdown(
+        f"""
+        <div class="ek-premium-card"
+             style="padding:16px;margin-bottom:10px">
+
+            <div style="
+                display:flex;
+                gap:13px;
+                align-items:flex-start;
+            ">
+
+                <div style="
+                    width:43px;
+                    height:43px;
+                    background:#F1F0FF;
+                    color:#6759DE;
+                    border-radius:12px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    font-size:19px;
+                    flex-shrink:0;
+                ">
+                    {icon}
+                </div>
+
+                <div style="flex:1">
+
+                    <div style="
+                        font-size:13px;
+                        font-weight:730;
+                        color:#303248;
+                    ">
+                        {title}
+                    </div>
+
+                    <div style="
+                        font-size:10px;
+                        color:#85899C;
+                        margin-top:5px;
+                    ">
+                        {source}
+                    </div>
+
+                    <div style="
+                        font-size:11px;
+                        color:#777D91;
+                        margin-top:9px;
+                    ">
+                        {description[:250]}
+                    </div>
+
+                    <div style="
+                        font-size:9px;
+                        color:#A0A3B2;
+                        margin-top:10px;
+                    ">
+                        {updated}
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if document_id:
+
+        if st.button(
+            "Open document",
+            key=f"open_doc_{document_id}",
+        ):
+
+            APP_STATE["ui"]["selected_document"] = document_id
+
+            st.session_state.selected_document_id = document_id
+
+            st.session_state.current_page = "documents"
+
+            st.rerun()
