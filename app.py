@@ -419,7 +419,8 @@ class BackendAdapter(DataAdapter):
         )
 
 
-DATA_ADAPTER = BackendAdapter(api)# PART 5 — ACCESS CONTROL
+DATA_ADAPTER = BackendAdapter(api) 
+# PART 5 — ACCESS CONTROL
 
 def has_permission(permission):
     permissions = APP_STATE.get("permissions", [])
@@ -458,7 +459,8 @@ def require_permission(permission):
         st.error("You don't have permission for this action.")
         return False
 
-    return True# PART 6 — KNOWLEDGE GRAPH
+    return True 
+    # PART 6 — KNOWLEDGE GRAPH
 
 class KnowledgeGraph:
 
@@ -507,7 +509,8 @@ class KnowledgeGraph:
         self.edges.clear()
 
 
-knowledge_graph = KnowledgeGraph()# PART 7 — SEARCH MODEL
+knowledge_graph = KnowledgeGraph() 
+# PART 7 — SEARCH MODEL
 
 SEARCH_FIELDS = [
     "query",
@@ -1003,7 +1006,8 @@ def render_animated_accent():
     ">
         ✦
     </div>
-    """, unsafe_allow_html=True)# ============================================================
+    """, unsafe_allow_html=True) 
+# ============================================================
 # PART 13 — PREMIUM WORKSPACE BAR
 # ============================================================
 
