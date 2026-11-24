@@ -1517,26 +1517,25 @@ def render_filter_row():
 # ============================================================
 
 def document_type_icon(document):
-
     mime_type = (
         document.get("mime_type")
         or document.get("file_type")
         or ""
     ).lower()
 
-    if "pdf' in mime_type:
-        return "▧"
+    if "pdf" in mime_type:
+        return "📄"
 
     if "spreadsheet" in mime_type or "excel" in mime_type:
-        return "▦"
+        return "📊"
 
     if "presentation" in mime_type:
-        return "▣"
+        return "📽️"
 
     if "image" in mime_type:
-        return "▧"
+        return "🖼️"
 
-    return "▤"
+    return "📁"
 
 
 def render_document_preview_card(document):
