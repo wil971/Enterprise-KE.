@@ -1796,3 +1796,226 @@ def sync_app_state():
 
 sync_app_state()
 
+# ============================================================
+# PART 22 — NAVIGATION
+# ============================================================
+
+NAVIGATION = {
+    "Workspace": [
+        ("Overview", "◈"),
+        ("Search", "⌕"),
+        ("Documents", "▤"),
+        ("Knowledge Graph", "◎"),
+        ("AI Workspace", "✧"),
+        ("Collections", "▣")
+    ],
+    "Organization": [
+        ("Team", "♧"),
+        ("Connectors", "⌘"),
+        ("Activity", "◷"),
+        ("Analytics", "▥")
+    ],
+    "Management": [
+        ("Billing", "◇"),
+        ("Settings", "⚙"),
+        ("Admin", "⌘")
+    ]
+}
+
+def navigate_to(page):
+    st.session_state.current_page = page
+    APP_STATE["active_page"] = page
+
+def render_sidebar_navigation():
+    with st.sidebar:
+        st.markdown("## ✦ Enterprise-KE")
+        st.caption("Knowledge workspace")
+
+        if st.session_state.get("user"):
+            user = st.session_state.user
+            st.caption(user.get("email", "Signed in"))
+        else:
+            st.caption("Workspace")
+
+        st.divider()
+
+        for group, items in NAVIGATION.items():
+            st.caption(group.upper())
+
+            for page, icon in items:
+                active = st.session_state.current_page == page
+
+                if st.button(
+                    f"{icon}  {page}",
+                    key=f"nav_{page}",
+                    use_container_width=True,
+                    type="primary" if active else "secondary"
+                ):
+                    navigate_to(page)
+                    st.rerun()
+
+        st.divider()
+
+        if st.button("↻ Refresh workspace", use_container_width=True):
+            st.session_state.last_refresh = time.time()
+            st.rerun()
+
+        st.caption(f"Enterprise-KE · v{APP_VERSION}")
+
+# ============================================================
+# PART 23 — NOTIFICATIONS / PAGE HELPERS
+# ============================================================
+
+def render_notification_center():
+    notifications = safe_list(
+        st.session_state.get("notifications")
+    )
+
+    with st.popover("♧ Notifications"):
+        if not notifications:
+            st.caption("No new notifications.")
+        else:
+            for item in notifications[:10]:
+                if isinstance(item, dict):
+                    st.write(item.get("message", "Notification"))
+                else:
+                    st.write(str(item))
+
+            if st.button("Clear notifications"):
+                st.session_state.notifications = []
+                st.rerun()
+
+def render_page_header(title, subtitle="", icon="✦"):
+    st.markdown(f"### {icon} {title}")
+    if subtitle:
+        st.caption(subtitle)
+    st.divider()
+
+def render_page_notice():
+    notice = st.session_state.get("notice")
+    if not notice:
+        return
+
+    kind = notice.get("kind", "info")
+    message = notice.get("message", "")
+
+    if kind == "success":
+        st.success(message)
+    elif kind == "error":
+        st.error(message)
+    elif kind == "warning":
+        st.warning(message)
+    else:
+        st.info(message)
+
+def render_empty_state(title, description, icon="◇"):
+    st.markdown(
+        f"""
+        <div class="ek-card" style="text-align:center;padding:35px">
+            <div style="font-size:38px;margin-bottom:12px">{icon}</div>
+            <h3>{title}</h3>
+            <p class="ek-muted">{description}</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def render_api_status():
+    result = api_get("/api/v1/health")
+
+    if result["ok"]:
+        st.caption("● API reachable")
+    else:
+        st.caption("○ API unavailable")
+    
+# ============================================================
+# PART 24 — OVERVIEW DASHBOARD
+# ============================================================
+
+def render_overview():
+    render_page_header(
+        "Overview",
+        "Your organization's knowledge at a glance.",
+        "◈"
+    )
+
+    result = api_get("/api/v1/dashboard")
+
+    if not result["ok"]:
+        st.warning("Dashboard data is currently unavailable.")
+        with st.expander("Technical details"):
+            st.code(str(result.get("error")))
+        return
+
+    data = safe_dict(result["data"])
+
+    st.markdown("#### Workspace snapshot")
+
+    metric_candidates = [
+        ("Documents", ["documents", "document_count", "total_documents"]),
+        ("Team members", ["team", "team_members", "member_count"]),
+        ("Collections", ["collections", "collection_count"]),
+        ("Connectors", ["connectors", "connector_count"])
+    ]
+
+    cols = st.columns(4)
+
+    for col, (label, keys) in zip(cols, metric_candidates):
+        value = None
+
+        for key in keys:
+            if key in data:
+                candidate = data[key]
+                if isinstance(candidate, (int, float)):
+                    value = candidate
+                    break
+                if isinstance(candidate, list):
+                    value = len(candidate)
+                    break
+
+        with col:
+            if value is not None:
+                st.metric(label, value)
+            else:
+                st.metric(label, "—")
+
+    st.markdown("#### Workspace activity")
+
+    activity = data.get("activity") or data.get("recent_activity")
+
+    if isinstance(activity, list) and activity:
+        for item in activity[:8]:
+            if isinstance(item, dict):
+                st.markdown(
+                    f"**{item.get('title', item.get('action', 'Activity'))}**"
+                )
+                st.caption(
+                    item.get("created_at", item.get("timestamp", ""))
+                )
+    else:
+        render_empty_state(
+            "No recent activity",
+            "Activity will appear here when workspace events are available.",
+            "◷"
+        )
+
+    st.markdown("#### Quick actions")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        if st.button("⌕ Search knowledge", use_container_width=True):
+            navigate_to("Search")
+            st.rerun()
+
+    with c2:
+        if st.button("▤ Browse documents", use_container_width=True):
+            navigate_to("Documents")
+            st.rerun()
+
+    with c3:
+        if st.button("◎ Explore graph", use_container_width=True):
+            navigate_to("Knowledge Graph")
+            st.rerun()
+            
+
