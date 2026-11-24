@@ -1652,3 +1652,147 @@ def render_document_preview_card(document):
             st.session_state.current_page = "documents"
 
             st.rerun()
+            # ============================================================
+# PART 20 — PREMIUM APPLICATION SHELL
+# ============================================================
+
+def render_premium_shell_start():
+
+    inject_premium_motion()
+
+    render_ambient_background()
+
+    render_sidebar_navigation()
+
+    render_premium_workspace_bar()
+
+    header_left, header_right = st.columns(
+        [8, 1]
+    )
+
+    with header_right:
+
+        render_notification_center()
+
+
+def render_premium_shell_end():
+
+    st.markdown("""
+    <div style="
+        margin-top:50px;
+        padding:20px 0 10px;
+        border-top:1px solid #E8EAF1;
+        text-align:center;
+        color:#9A9DAE;
+        font-size:9px;
+        letter-spacing:.5px;
+    ">
+        ENTERPRISE KE · KNOWLEDGE INTELLIGENCE
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_premium_page(
+    title,
+    subtitle="",
+    icon="✦",
+    eyebrow="WORKSPACE",
+):
+
+    render_premium_shell_start()
+
+    render_premium_page_title(
+        title=title,
+        subtitle=subtitle,
+        icon=icon,
+        eyebrow=eyebrow,
+    )
+
+    render_premium_shell_end()
+    
+# ============================================================
+# PART 21 — COMPATIBILITY / API BRIDGE
+# ============================================================
+
+BASE_APP_STATE = {
+    "user": None,
+    "documents": [],
+    "entities": [],
+    "relationships": [],
+    "search": {"query": "", "results": []},
+    "notifications": [],
+    "active_page": "Overview"
+}
+
+APP_STATE = globals().get("APP_STATE", {})
+APP_STATE.update({
+    k: v for k, v in BASE_APP_STATE.items()
+    if k not in APP_STATE
+})
+
+def get_state(key, default=None):
+    return APP_STATE.get(key, default)
+
+def set_state(key, value):
+    APP_STATE[key] = value
+    return value
+
+def reset_state():
+    APP_STATE.clear()
+    APP_STATE.update(json.loads(json.dumps(BASE_APP_STATE)))
+
+class APIClient:
+    def get(self, endpoint, params=None):
+        return api_get(endpoint, params)
+
+    def post(self, endpoint, payload=None):
+        return api_post(endpoint, payload)
+
+    def delete(self, endpoint):
+        return api_delete(endpoint)
+
+api = APIClient()
+
+def normalize_search_results(data):
+    if isinstance(data, list):
+        return data
+
+    if not isinstance(data, dict):
+        return []
+
+    for key in ("results", "items", "documents", "data"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+
+    return []
+
+def normalize_documents(data):
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        for key in ("documents", "items", "results", "data"):
+            if isinstance(data.get(key), list):
+                return data[key]
+
+    return []
+
+def get_api_error(result):
+    error = result.get("error")
+    if isinstance(error, dict):
+        return error.get("detail") or str(error)
+    return error or "Request failed"
+
+# Bridge Streamlit session state to architecture state
+def sync_app_state():
+    APP_STATE["user"] = st.session_state.get("user")
+    APP_STATE["active_page"] = st.session_state.get("current_page")
+    APP_STATE["documents"] = st.session_state.get("documents", [])
+    APP_STATE["search"] = {
+        "query": st.session_state.get("search_query", ""),
+        "results": st.session_state.get("search_results", [])
+    }
+
+sync_app_state()
+
