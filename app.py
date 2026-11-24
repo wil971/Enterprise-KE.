@@ -1072,3 +1072,282 @@ def render_premium_workspace_bar():
 
     </div>
     """, unsafe_allow_html=True)
+    # ============================================================
+# PART 14 — ANIMATED PAGE TITLES
+# ============================================================
+
+def render_premium_page_title(
+    title,
+    subtitle="",
+    eyebrow="WORKSPACE",
+    icon="✦",
+):
+
+    st.markdown(
+        f"""
+        <div class="ek-animate-in"
+             style="margin:25px 0 22px">
+
+            <div style="
+                display:flex;
+                align-items:center;
+                gap:9px;
+                font-size:9px;
+                font-weight:800;
+                letter-spacing:1.6px;
+                color:#8A8DA2;
+                margin-bottom:11px;
+            ">
+                <span style="color:#7163E8">
+                    {icon}
+                </span>
+
+                {eyebrow}
+            </div>
+
+            <div style="
+                font-size:32px;
+                font-weight:820;
+                letter-spacing:-1.5px;
+                color:#22243B;
+                line-height:1.15;
+            ">
+                {title}
+            </div>
+
+            <div style="
+                font-size:13px;
+                color:#85899C;
+                margin-top:9px;
+            ">
+                {subtitle}
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_breadcrumb(items):
+
+    breadcrumb_html = " &nbsp;›&nbsp; ".join(
+        f'<span style="color:#777D92">{item}</span>'
+        for item in items
+    )
+
+    st.markdown(
+        f"""
+        <div style="
+            font-size:10px;
+            margin:8px 0 15px;
+            color:#A1A4B4;
+        ">
+            {breadcrumb_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+)
+    # ============================================================
+# PART 15 — PREMIUM SEARCH COMMAND BAR
+# ============================================================
+
+def render_premium_search_bar():
+
+    st.markdown("""
+    <div style="
+        font-size:11px;
+        color:#73778D;
+        margin-bottom:8px;
+        font-weight:600;
+    ">
+        SEARCH YOUR ORGANIZATION
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("premium_search_command"):
+
+        query = st.text_input(
+            "Knowledge search",
+            placeholder=(
+                "Ask a question or search documents, "
+                "people and knowledge..."
+            ),
+            label_visibility="collapsed",
+        )
+
+        submitted = st.form_submit_button(
+            "⌕  Search knowledge",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted and query.strip():
+
+        st.session_state.search_query = query
+
+        with st.spinner("Searching your knowledge..."):
+
+            result = search_backend(query)
+
+        if result.success:
+
+            st.session_state.search_results = result.data
+
+            st.session_state.current_page = "search"
+
+            st.rerun()
+
+        else:
+
+            show_api_error(result)
+
+    st.markdown("""
+    <div style="
+        display:flex;
+        gap:6px;
+        flex-wrap:wrap;
+        margin-top:9px;
+        font-size:9px;
+        color:#9195A7;
+    ">
+        <span>Search across your workspace</span>
+        <span>·</span>
+        <span>Find documents</span>
+        <span>·</span>
+        <span>Discover knowledge</span>
+    </div>
+    """, unsafe_allow_html=True)
+    # ============================================================
+# PART 16 — PREMIUM GLASS CARDS
+# ============================================================
+
+def render_glass_panel(
+    title,
+    description="",
+    content=None,
+    accent="#7163E8",
+):
+
+    description_html = ""
+
+    if description:
+
+        description_html = f"""
+        <div style="
+            font-size:11px;
+            color:#85899C;
+            margin-top:6px;
+        ">
+            {description}
+        </div>
+        """
+
+    content_html = ""
+
+    if content:
+
+        content_html = f"""
+        <div style="
+            margin-top:16px;
+            color:#484B61;
+            font-size:12px;
+        ">
+            {content}
+        </div>
+        """
+
+    st.markdown(
+        f"""
+        <div class="ek-premium-card ek-animate-in"
+             style="padding:20px 21px">
+
+            <div style="
+                width:3px;
+                height:25px;
+                border-radius:10px;
+                background:{accent};
+                margin-bottom:13px;
+            "></div>
+
+            <div style="
+                font-size:15px;
+                font-weight:750;
+                color:#292B43;
+            ">
+                {title}
+            </div>
+
+            {description_html}
+
+            {content_html}
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_premium_metric(
+    label,
+    value,
+    detail="",
+    icon="✦",
+):
+
+    st.markdown(
+        f"""
+        <div class="ek-premium-card"
+             style="padding:18px">
+
+            <div style="
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+            ">
+
+                <div style="
+                    font-size:10px;
+                    font-weight:650;
+                    color:#85899C;
+                ">
+                    {label}
+                </div>
+
+                <div style="
+                    height:30px;
+                    width:30px;
+                    background:#F0EEFF;
+                    border-radius:10px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    color:#6D5EE5;
+                ">
+                    {icon}
+                </div>
+
+            </div>
+
+            <div style="
+                font-size:27px;
+                font-weight:800;
+                color:#252740;
+                margin-top:13px;
+                letter-spacing:-1px;
+            ">
+                {value}
+            </div>
+
+            <div style="
+                font-size:10px;
+                color:#9295A7;
+                margin-top:6px;
+            ">
+                {detail}
+            </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
