@@ -419,7 +419,7 @@ class BackendAdapter(DataAdapter):
         )
 
 
-DATA_ADAPTER = BackendAdapter(api) 
+DATA_ADAPTER = BackendAdapter()
 # PART 5 — ACCESS CONTROL
 
 def has_permission(permission):
