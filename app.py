@@ -2235,6 +2235,274 @@ def render_knowledge_graph():
                     st.json(detail["data"])
                 else:
                     st.error(get_api_error(detail))
+
+
+# ============================================================
+# PART 28 — AI WORKSPACE
+# ============================================================
+
+def render_ai_workspace():
+    render_page_header(
+        "AI Workspace",
+        "Work with your organization's knowledge.",
+        "✧"
+    )
+
+    st.info(
+        "AI chat integration is not yet connected to a verified "
+        "assistant endpoint. Knowledge search below is live."
+    )
+
+    prompt = st.text_area(
+        "Ask about your knowledge",
+        placeholder="Enter a question or topic to search...",
+        height=120,
+        key="ai_workspace_prompt"
+    )
+
+    if st.button("Search knowledge for this question", type="primary"):
+        if not prompt.strip():
+            st.warning("Enter a question first.")
+            return
+
+        result = api_get(
+            "/api/v1/search",
+            params={"query": prompt.strip()}
+        )
+
+        if not result["ok"]:
+            st.error(get_api_error(result))
+            return
+
+        results = normalize_search_results(result["data"])
+
+        st.markdown("#### Retrieved knowledge")
+
+        if not results:
+            st.info("No matching knowledge was found.")
+        else:
+            for item in results[:10]:
+                if not isinstance(item, dict):
+                    continue
+
+                title = item.get("title", "Knowledge result")
+                content = (
+                    item.get("content")
+                    or item.get("snippet")
+                    or item.get("description")
+                    or ""
+                )
+
+                with st.container(border=True):
+                    st.markdown(f"**{title}**")
+                    st.write(str(content)[:1500])
+
+    st.markdown("#### AI integration status")
+    st.caption("Assistant generation: Not connected")
+    st.caption("Knowledge retrieval: Backend search API")
+    st.caption("Sources: Search results returned by backend")
+                                  
+# ============================================================
+# PART 29 — MANAGEMENT PAGES
+# ============================================================
+
+MANAGEMENT_ENDPOINTS = {
+    "Team": "/api/v1/team",
+    "Connectors": "/api/v1/connectors",
+    "Activity": "/api/v1/audit",
+    "Billing": "/api/v1/subscriptions/current",
+    "Analytics": "/api/v1/usage",
+    "Admin": "/api/v1/system/status"
+}
+
+def render_management_page(page):
+    render_page_header(
+        page,
+        f"{page} workspace information",
+        "⚙"
+    )
+
+    endpoint = MANAGEMENT_ENDPOINTS.get(page)
+
+    if not endpoint:
+        render_settings_page()
+        return
+
+    result = api_get(endpoint)
+
+    if not result["ok"]:
+        st.warning(f"{page} information is unavailable.")
+        st.caption(str(get_api_error(result)))
+        return
+
+    data = result["data"]
+
+    if isinstance(data, dict):
+        st.json(data)
+    elif isinstance(data, list):
+        if data:
+            st.dataframe(
+                pd.DataFrame(data),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            render_empty_state(
+                f"No {page.lower()} records",
+                "Records will appear when the backend returns them."
+            )
+    else:
+        st.write(data)
+
+def render_settings_page():
+    render_page_header(
+        "Settings",
+        "Workspace configuration and connection status.",
+        "⚙"
+    )
+
+    st.markdown("#### Application")
+    st.write("Name:", APP_NAME)
+    st.write("Version:", APP_VERSION)
+
+    st.markdown("#### API")
+    st.code(API_BASE_URL)
+
+    if st.button("Check API connection"):
+        result = api_get("/api/v1/health")
+
+        if result["ok"]:
+            st.success("API responded successfully.")
+            st.json(result["data"])
+        else:
+            st.error("API connection failed.")
+            st.caption(str(get_api_error(result)))
+
+    st.markdown("#### Session")
+    st.write(
+        "Authentication:",
+        "Signed in" if st.session_state.authenticated else "Not signed in"
+    )
+
+    if st.session_state.authenticated:
+        if st.button("Sign out"):
+            st.session_state.access_token = None
+            st.session_state.user = None
+            st.session_state.authenticated = False
+            st.session_state.current_page = "Overview"
+            set_notice("Signed out.", "success")
+            st.rerun()
+            
+# ============================================================
+# PART 30 — MAIN ROUTER / APPLICATION ASSEMBLY
+# ============================================================
+
+def render_document_preview():
+    render_page_header(
+        "Document Preview",
+        "Selected document details.",
+        "▤"
+    )
+
+    doc = st.session_state.get("selected_document")
+
+    if not doc:
+        render_empty_state(
+            "No document selected",
+            "Choose a document from the library first."
+        )
+
+        if st.button("Back to documents"):
+            navigate_to("Documents")
+            st.rerun()
+        return
+
+    doc_id = doc.get("id") or doc.get("document_id")
+
+    st.markdown(
+        f"### {doc.get('title', doc.get('name', 'Document'))}"
+    )
+
+    st.json(doc)
+
+    if doc_id:
+        if st.button("Load full document details"):
+            result = api_get(f"/api/v1/documents/{doc_id}")
+
+            if result["ok"]:
+                st.json(result["data"])
+            else:
+                st.error(get_api_error(result))
+
+    if st.button("← Back to library"):
+        navigate_to("Documents")
+        st.rerun()
+
+def render_collections_page():
+    render_page_header(
+        "Collections",
+        "Organize knowledge into curated collections.",
+        "▣"
+    )
+
+    st.info(
+        "Collection creation and persistence require a confirmed "
+        "collection API integration. No sample collections are shown."
+    )
+
+def render_main_app():
+    render_sidebar_navigation()
+
+    render_page_notice()
+
+    page = st.session_state.current_page
+
+    if page == "Overview":
+        render_overview()
+
+    elif page == "Search":
+        render_search_page()
+
+    elif page == "Documents":
+        render_documents()
+
+    elif page == "Document Preview":
+        render_document_preview()
+
+    elif page == "Knowledge Graph":
+        render_knowledge_graph()
+
+    elif page == "AI Workspace":
+        render_ai_workspace()
+
+    elif page == "Collections":
+        render_collections_page()
+
+    elif page in MANAGEMENT_ENDPOINTS:
+        render_management_page(page)
+
+    elif page == "Settings":
+        render_settings_page()
+
+    else:
+        render_empty_state(
+            "Page not found",
+            "This page is not registered in the application."
+        )
+
+    st.divider()
+    render_notification_center()
+    st.caption(
+        f"{APP_NAME} · {APP_VERSION} · "
+        "Enterprise knowledge workspace"
+    )
+
+# ============================================================
+# APPLICATION ENTRY POINT
+# ============================================================
+
+render_main_app()
+    
                     
             
 
