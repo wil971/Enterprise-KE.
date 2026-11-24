@@ -386,35 +386,35 @@ class DataAdapter:
 
 
 class BackendAdapter(DataAdapter):
-
-    def __init__(self, api_client):
-        self.api = api_client
+    def __init__(self):
+        pass
 
     def list_items(self, endpoint, **filters):
-        return self.api.get(
+        return api_get(
             endpoint,
             params=filters,
         )
 
     def get_item(self, endpoint, item_id):
-        return self.api.get(
+        return api_get(
             f"{endpoint}/{item_id}"
         )
 
     def create_item(self, endpoint, payload):
-        return self.api.post(
+        return api_post(
             endpoint,
-            json_body=payload,
+            payload=payload,
         )
 
     def update_item(self, endpoint, item_id, payload):
-        return self.api.patch(
+        return api_call(
+            "PATCH",
             f"{endpoint}/{item_id}",
-            json_body=payload,
+            payload=payload,
         )
 
     def delete_item(self, endpoint, item_id):
-        return self.api.delete(
+        return api_delete(
             f"{endpoint}/{item_id}"
         )
 
