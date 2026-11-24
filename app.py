@@ -2018,4 +2018,223 @@ def render_overview():
             navigate_to("Knowledge Graph")
             st.rerun()
             
+# ============================================================
+# PART 25 — DOCUMENT LIBRARY
+# ============================================================
+
+def load_documents():
+    result = api_get("/api/v1/documents")
+
+    if not result["ok"]:
+        st.session_state.api_error = get_api_error(result)
+        return False
+
+    docs = normalize_documents(result["data"])
+    st.session_state.documents = docs
+    APP_STATE["documents"] = docs
+    st.session_state.api_error = None
+    return True
+
+def render_documents():
+    render_page_header(
+        "Documents",
+        "Browse and manage connected knowledge.",
+        "▤"
+    )
+
+    left, right = st.columns([4, 1])
+
+    with left:
+        query = st.text_input(
+            "Filter documents",
+            placeholder="Filter by title or type..."
+        )
+
+    with right:
+        if st.button("↻ Refresh", use_container_width=True):
+            load_documents()
+
+    if not st.session_state.documents:
+        load_documents()
+
+    docs = safe_list(st.session_state.documents)
+
+    if query:
+        docs = [
+            d for d in docs
+            if query.lower() in json.dumps(d, default=str).lower()
+        ]
+
+    if not docs:
+        render_empty_state(
+            "No documents available",
+            "Upload or connect a source to populate this library.",
+            "▤"
+        )
+        return
+
+    st.caption(f"{len(docs)} document(s)")
+
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+
+        doc_id = doc.get("id") or doc.get("document_id")
+        title = doc.get("title") or doc.get("name") or "Untitled document"
+        doc_type = doc.get("type") or doc.get("mime_type") or "Document"
+        updated = doc.get("updated_at") or doc.get("created_at") or ""
+
+        with st.container(border=True):
+            a, b = st.columns([5, 1])
+
+            with a:
+                st.markdown(f"**▤ {title}**")
+                st.caption(f"{doc_type}  ·  {updated}")
+
+            with b:
+                if st.button("Open", key=f"open_doc_{doc_id}"):
+                    st.session_state.selected_document = doc
+                    navigate_to("Document Preview")
+                    st.rerun()
+                    
+# ============================================================
+# PART 26 — ENTERPRISE SEARCH
+# ============================================================
+
+def render_search_page():
+    render_page_header(
+        "Enterprise Search",
+        "Search across the knowledge available to your workspace.",
+        "⌕"
+    )
+
+    query = st.text_input(
+        "Search",
+        value=st.session_state.get("search_query", ""),
+        placeholder="Search documents, topics, keywords..."
+        , key="enterprise_search_input"
+    )
+
+    if st.button("Search knowledge", type="primary"):
+        st.session_state.search_query = query
+
+        if query.strip():
+            result = api_get(
+                "/api/v1/search",
+                params={"query": query.strip()}
+            )
+
+            if result["ok"]:
+                st.session_state.search_results = (
+                    normalize_search_results(result["data"])
+                )
+            else:
+                st.error(get_api_error(result))
+
+    results = safe_list(st.session_state.search_results)
+
+    if not query.strip() and not results:
+        render_empty_state(
+            "Start searching",
+            "Enter a phrase, keyword or topic to search your knowledge.",
+            "⌕"
+        )
+        return
+
+    if results:
+        st.caption(f"{len(results)} result(s)")
+
+        for i, item in enumerate(results):
+            if not isinstance(item, dict):
+                continue
+
+            title = item.get("title") or item.get("name") or "Untitled"
+            excerpt = (
+                item.get("snippet")
+                or item.get("content")
+                or item.get("description")
+                or ""
+            )
+            source = item.get("source") or item.get("type") or "Result"
+
+            with st.container(border=True):
+                st.markdown(f"**{title}**")
+                st.caption(source)
+                st.write(str(excerpt)[:1200])
+
+    elif query.strip():
+        render_empty_state(
+            "No results found",
+            "Try different keywords or a broader search.",
+            "⌕"
+        )
+        
+# ============================================================
+# PART 27 — KNOWLEDGE GRAPH
+# ============================================================
+
+def render_knowledge_graph():
+    render_page_header(
+        "Knowledge Graph",
+        "Explore connections between documents and knowledge.",
+        "◎"
+    )
+
+    result = api_get("/api/v1/graph/documents")
+
+    if not result["ok"]:
+        st.error("Knowledge graph data could not be loaded.")
+        st.caption(str(get_api_error(result)))
+        return
+
+    graph_data = result["data"]
+
+    if isinstance(graph_data, dict):
+        nodes = graph_data.get("nodes", graph_data.get("documents", []))
+        edges = graph_data.get("edges", graph_data.get("relationships", []))
+    elif isinstance(graph_data, list):
+        nodes, edges = graph_data, []
+    else:
+        nodes, edges = [], []
+
+    nodes = safe_list(nodes)
+    edges = safe_list(edges)
+
+    st.metric("Graph documents / nodes", len(nodes))
+    st.metric("Relationships returned", len(edges))
+
+    if not nodes:
+        render_empty_state(
+            "Graph is empty",
+            "Add knowledge sources to create graph data.",
+            "◎"
+        )
+        return
+
+    st.markdown("#### Graph records")
+
+    for node in nodes[:100]:
+        if not isinstance(node, dict):
+            continue
+
+        node_id = node.get("id") or node.get("document_id")
+        title = node.get("title") or node.get("name") or str(node_id)
+
+        with st.expander(title):
+            st.json(node)
+
+            if node_id and st.button(
+                "Explore connections",
+                key=f"graph_explore_{node_id}"
+            ):
+                detail = api_get(
+                    f"/api/v1/graph/explore/{node_id}"
+                )
+
+                if detail["ok"]:
+                    st.json(detail["data"])
+                else:
+                    st.error(get_api_error(detail))
+                    
+            
 
