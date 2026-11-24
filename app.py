@@ -548,12 +548,23 @@ def execute_search():
 
     request_data = build_search_request()
 
-    if not request_data["query"].strip():
+    query = str(
+        request_data.get("query", "")
+    ).strip()
+
+    if not query:
         return None
 
-    response = api.get(
+    response = api_post(
         "/api/v1/search",
-        params=request_data,
+        payload={
+            "query": query,
+            "filters": request_data.get(
+                "filters", {}
+            ),
+            "page": 1,
+            "page_size": 10,
+        },
     )
 
     return response
