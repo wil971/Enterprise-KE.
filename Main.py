@@ -761,6 +761,8 @@ async def list_team(
         .order_by(User.created_at.desc())
     )
 
+    members = result.scalars().all()
+
     return [
         {
             "id": member.id,
@@ -770,7 +772,7 @@ async def list_team(
             "is_active": member.is_active,
             "created_at": member.created_at,
         }
-        for member in result.scalars().all()
+        for member in members
     ]
 
 
