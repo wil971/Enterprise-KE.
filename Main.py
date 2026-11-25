@@ -273,6 +273,54 @@ class User(Base):
             name="uq_user_tenant_email"
         ),
     )
+    class Invitation(Base):
+    __tablename__ = "invitations"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"),
+        index=True,
+        nullable=False,
+    )
+
+    email: Mapped[str] = mapped_column(
+        String(320),
+        nullable=False,
+        index=True,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(30),
+        default="member",
+        nullable=False,
+    )
+
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
 
 
 class Document(Base):
