@@ -373,29 +373,37 @@ def hash_password(password: str) -> str:
         raise ValueError("Password must have at least 12 characters.")
 
     salt = secrets.token_bytes(16)
+
     digest = hashlib.scrypt(
-        password.encode(),
+        password.encode("utf-8"),
         salt=salt,
         n=2**14,
         r=8,
         p=1,
     )
-    return salt.hex() + ":" + digest.hex()
+
+    return f"{salt.hex()}:{digest.hex()}"
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
-        salt_hex, expected_hash = stored_hash.split("$", 1)
+        salt_hex, expected_hash = stored_hash.split(":", 1)
 
-        actual_hash = hashlib.scrypt(
-            password.encode(),
-            salt=bytes.fromhex(salt_hex),
+        salt = bytes.fromhex(salt_hex)
+        expected_digest = bytes.fromhex(expected_hash)
+
+        actual_digest = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=salt,
             n=2**14,
             r=8,
             p=1,
-        ).hex()
+        )
 
-        return hmac.compare_digest(actual_hash, expected_hash)
+        return hmac.compare_digest(
+            actual_digest,
+            expected_digest,
+        )
 
     except (ValueError, TypeError):
         return False
