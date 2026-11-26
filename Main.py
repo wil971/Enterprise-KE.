@@ -791,8 +791,8 @@ async def create_invitation(
         "role": invitation.role,
         "expires_at": invitation.expires_at,
         "invite_token": raw_token,
-    }
-        }
+        )
+    )
     
 
     db.add(invitation)
