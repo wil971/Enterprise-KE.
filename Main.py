@@ -273,6 +273,7 @@ class User(Base):
             name="uq_user_tenant_email"
         ),
     )
+    
     class Invitation(Base):
     __tablename__ = "invitations"
 
