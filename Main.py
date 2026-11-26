@@ -274,7 +274,7 @@ class User(Base):
         ),
     )
     
-    class Invitation(Base):
+class Invitation(Base):
     __tablename__ = "invitations"
 
     id: Mapped[str] = mapped_column(
