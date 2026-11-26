@@ -743,26 +743,17 @@ async def create_invitation(
     email = payload.email.lower().strip()
 
     if payload.role not in ("member", "viewer"):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid invitation role.",
-        )
+        raise HTTPException(status_code=400, detail="Invalid role.")
 
-    # Check if the user already exists in this organization.
     existing = await db.execute(
         select(User).where(
             User.tenant_id == user.tenant_id,
             User.email == email,
         )
     )
-
     if existing.scalar_one_or_none():
-        raise HTTPException(
-            status_code=409,
-            detail="User already exists.",
-        )
+        raise HTTPException(status_code=409, detail="User already exists.")
 
-    # Check for an active, unaccepted invitation.
     pending_invitation = await db.execute(
         select(Invitation).where(
             Invitation.tenant_id == user.tenant_id,
@@ -771,28 +762,36 @@ async def create_invitation(
             Invitation.expires_at > utc_now(),
         )
     )
-
     if pending_invitation.scalar_one_or_none():
         raise HTTPException(
             status_code=409,
             detail="A pending invitation already exists for this email.",
         )
 
-    # Generate a secure invitation token.
     raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires_at = utc_now() + timedelta(days=7)
 
-    token_hash = hashlib.sha256(
-        raw_token.encode()
-    ).hexdigest()
-
-    # Create invitation with a seven-day expiry.
     invitation = Invitation(
         tenant_id=user.tenant_id,
         email=email,
         role=payload.role,
         token_hash=token_hash,
-        expires_at=utc_now() + timedelta(days=7),
+        invited_by=user.id,
+        expires_at=expires_at,
     )
+    db.add(invitation)
+    await db.commit()
+    await db.refresh(invitation)
+
+    return {
+        "id": invitation.id,
+        "email": invitation.email,
+        "role": invitation.role,
+        "expires_at": invitation.expires_at,
+        "invite_token": raw_token,
+    }
+    
 
     db.add(invitation)
     await db.commit()
