@@ -714,7 +714,7 @@ if pending_invitation.scalar_one_or_none():
             "A pending invitation already exists for this email.",
         )
 
-    raw_token = secrets.token_urlsafe(32)
+raw_token = secrets.token_urlsafe(32)
 
     from datetime import timedelta
 
