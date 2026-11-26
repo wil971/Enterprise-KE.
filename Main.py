@@ -708,7 +708,7 @@ pending_invitation = await db.execute(
         )
     )
 
-    if pending_invitation.scalar_one_or_none():
+if pending_invitation.scalar_one_or_none():
         raise HTTPException(
             409,
             "A pending invitation already exists for this email.",
