@@ -717,17 +717,70 @@ if pending_invitation.scalar_one_or_none():
 raw_token = secrets.token_urlsafe(32)
 
 from datetime import timedelta
-invitation = Invitation(
+
+
+class InviteInput(BaseModel):
+    email: EmailStr
+    role: str = "member"
+
+
+@app.post("/api/v1/team/invitations")
+async def create_invitation(
+    payload: InviteInput,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    email = payload.email.lower().strip()
+
+    if payload.role not in {"member", "viewer"}:
+        raise HTTPException(400, "Invalid role.")
+
+    # Check if the user already exists
+    existing = await db.execute(
+        select(User).where(
+            User.tenant_id == user.tenant_id,
+            User.email == email,
+        )
+    )
+
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "User already exists.")
+
+    # Check for an active pending invitation
+    pending_invitation = await db.execute(
+        select(Invitation).where(
+            Invitation.tenant_id == user.tenant_id,
+            Invitation.email == email,
+            Invitation.accepted_at.is_(None),
+            Invitation.expires_at > utc_now(),
+        )
+    )
+
+    if pending_invitation.scalar_one_or_none():
+        raise HTTPException(
+            409,
+            "A pending invitation already exists for this email.",
+        )
+
+    # Generate invitation token
+    raw_token = secrets.token_urlsafe(32)
+
+    invitation = Invitation(
         tenant_id=user.tenant_id,
         email=email,
         role=payload.role,
-        token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+        token_hash=hashlib.sha256(
+            raw_token.encode()
+        ).hexdigest(),
         expires_at=utc_now() + timedelta(days=7),
     )
 
     db.add(invitation)
     await db.commit()
+    await db.refresh(invitation)
 
+    # Record audit event
     await write_audit(
         db,
         user.tenant_id,
