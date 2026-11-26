@@ -701,11 +701,12 @@ async def create_invitation(
         raise HTTPException(409, "User already exists.") 
 pending_invitation = await db.execute()
 select(Invitation).where()
-            Invitation.tenant_id == user.tenant_id,
-            Invitation.email == email,
-            Invitation.accepted_at.is_(None),
-            Invitation.expires_at > utc_now(),
-            )
+Invitation.tenant_id == user.tenant_id,
+Invitation.email == email,
+Invitation.accepted_at.is_(None),
+Invitation.expires_at > utc_now(),
+       )
+
 )
 
 
