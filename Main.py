@@ -792,11 +792,6 @@ async def create_invitation(
         "expires_at": invitation.expires_at,
         "invite_token": raw_token,
     }
-    
-
-    db.add(invitation)
-    await db.commit()
-    await db.refresh(invitation)
 
     # Record the invitation in the audit log.
     await write_audit(
