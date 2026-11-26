@@ -705,7 +705,7 @@ select(Invitation).where(
             Invitation.email == email,
             Invitation.accepted_at.is_(None),
             Invitation.expires_at > utc_now(),
-        )
+    }
 }
 
 
