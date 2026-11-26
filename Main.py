@@ -706,7 +706,7 @@ select(Invitation).where(
             Invitation.accepted_at.is_(None),
             Invitation.expires_at > utc_now(),
         )
-    )
+ )
 
 if pending_invitation.scalar_one_or_none():
         raise HTTPException(
