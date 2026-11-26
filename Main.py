@@ -716,7 +716,7 @@ if pending_invitation.scalar_one_or_none():
 
 raw_token = secrets.token_urlsafe(32)
 
- from datetime import timedelta
+from datetime import timedelta
  invitation = Invitation(
         tenant_id=user.tenant_id,
         email=email,
