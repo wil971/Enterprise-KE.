@@ -700,7 +700,7 @@ async def create_invitation(
     if existing.scalar_one_or_none():
         raise HTTPException(409, "User already exists.") 
 pending_invitation = await db.execute()
-select(Invitation).where(
+select(Invitation).where()
             Invitation.tenant_id == user.tenant_id,
             Invitation.email == email,
             Invitation.accepted_at.is_(None),
