@@ -719,6 +719,15 @@ raw_token = secrets.token_urlsafe(32)
 from datetime import timedelta
 
 
+# ============================================================
+# TEAM INVITATIONS — CLEAN, SINGLE IMPLEMENTATION
+# ============================================================
+
+from datetime import timedelta
+import hashlib
+import secrets
+
+
 class InviteInput(BaseModel):
     email: EmailStr
     role: str = "member"
@@ -733,10 +742,13 @@ async def create_invitation(
 ):
     email = payload.email.lower().strip()
 
-    if payload.role not in {"member", "viewer"}:
-        raise HTTPException(400, "Invalid role.")
+    if payload.role not in ("member", "viewer"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid invitation role.",
+        )
 
-    # Check if the user already exists
+    # Check if the user already exists in this organization.
     existing = await db.execute(
         select(User).where(
             User.tenant_id == user.tenant_id,
@@ -745,9 +757,12 @@ async def create_invitation(
     )
 
     if existing.scalar_one_or_none():
-        raise HTTPException(409, "User already exists.")
+        raise HTTPException(
+            status_code=409,
+            detail="User already exists.",
+        )
 
-    # Check for an active pending invitation
+    # Check for an active, unaccepted invitation.
     pending_invitation = await db.execute(
         select(Invitation).where(
             Invitation.tenant_id == user.tenant_id,
@@ -759,20 +774,23 @@ async def create_invitation(
 
     if pending_invitation.scalar_one_or_none():
         raise HTTPException(
-            409,
-            "A pending invitation already exists for this email.",
+            status_code=409,
+            detail="A pending invitation already exists for this email.",
         )
 
-    # Generate invitation token
+    # Generate a secure invitation token.
     raw_token = secrets.token_urlsafe(32)
 
+    token_hash = hashlib.sha256(
+        raw_token.encode()
+    ).hexdigest()
+
+    # Create invitation with a seven-day expiry.
     invitation = Invitation(
         tenant_id=user.tenant_id,
         email=email,
         role=payload.role,
-        token_hash=hashlib.sha256(
-            raw_token.encode()
-        ).hexdigest(),
+        token_hash=token_hash,
         expires_at=utc_now() + timedelta(days=7),
     )
 
@@ -780,7 +798,7 @@ async def create_invitation(
     await db.commit()
     await db.refresh(invitation)
 
-    # Record audit event
+    # Record the invitation in the audit log.
     await write_audit(
         db,
         user.tenant_id,
@@ -788,7 +806,10 @@ async def create_invitation(
         "team.invitation_created",
         "invitation",
         invitation.id,
-        {"email": email, "role": payload.role},
+        {
+            "email": email,
+            "role": payload.role,
+        },
         request.client.host if request.client else "",
     )
 
@@ -796,6 +817,7 @@ async def create_invitation(
         "invitation_id": invitation.id,
         "invitation_token": raw_token,
         "email": email,
+        "role": payload.role,
         "expires_at": invitation.expires_at,
         "email_delivery": "not_configured",
     }
