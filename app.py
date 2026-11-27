@@ -441,8 +441,6 @@ def run_application():
 # ENTRY POINT
 # ------------------------------------------------------------
 
-if authenticated():
-    run_application()
     
 # ============================================================
 # PART 2/20 — AUTHENTICATION UI
@@ -2615,9 +2613,7 @@ def run_application():
 # THIS MUST BE THE LAST EXECUTABLE SECTION IN app.py
 # ------------------------------------------------------------
 
-if authentication_router():
 
-    run_application()
     # ============================================================
 # PART 21 — COLLABORATION WORKSPACE
 # ============================================================
