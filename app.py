@@ -1407,6 +1407,344 @@ def render_documents():
 # elif page == "Documents":
 #     render_documents()
 
+# ============================================================
+# PART 7/20 — DOCUMENT VIEWER
+# ============================================================
+
+def render_document_viewer():
+
+    document_id = st.session_state.get(
+        "selected_document"
+    )
+
+    if not document_id:
+
+        st.warning("Select a document from the library first.")
+
+        if st.button("Return to documents"):
+            st.session_state.page = "Documents"
+            st.rerun()
+
+        return
+
+    status, data = api_get(
+        f"/api/v1/documents/{document_id}"
+    )
+
+    if status != 200:
+
+        st.error(
+            data.get(
+                "detail",
+                "Unable to retrieve document."
+            )
+        )
+
+        return
+
+    if st.button("← Back to documents"):
+        st.session_state.page = "Documents"
+        st.rerun()
+
+    st.markdown("")
+
+    st.title(data.get("filename", "Document"))
+
+    st.caption(
+        f"Source: {data.get('source', 'Unknown')}"
+    )
+
+    st.caption(
+        f"Document ID: {data.get('id', '')}"
+    )
+
+    st.divider()
+
+    text_content = data.get("text", "")
+
+    if not text_content:
+
+        st.info("This document has no extracted text.")
+
+        return
+
+    st.markdown("### Document content")
+
+    st.text_area(
+        "Extracted text",
+        value=text_content,
+        height=600,
+        label_visibility="collapsed",
+        disabled=True,
+    )
+
+
+# Add this branch to the application router:
+#
+# elif page == "Document Viewer":
+#     render_document_viewer()
+
+# ============================================================
+# PART 8/20 — AI KNOWLEDGE ASSISTANT INTERFACE
+# ============================================================
+
+def render_assistant():
+
+    page_header(
+        "Knowledge Assistant",
+        "Ask questions about your organization's information.",
+    )
+
+    st.markdown("""
+    <div class="eg-card">
+        <div class="eg-card-title">
+            ✧ Ask your organization’s knowledge
+        </div>
+        <div class="eg-card-subtitle">
+            The assistant interface is being connected to
+            the retrieval and answer-generation service.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("")
+
+    st.warning(
+        "The current backend has document search but does not "
+        "yet expose a dedicated AI chat endpoint. This interface "
+        "will not fabricate answers."
+    )
+
+    if not st.session_state.chat_messages:
+
+        st.markdown("### Try asking")
+
+        suggestions = [
+            "What policies are available?",
+            "Find documents about our projects.",
+            "What information is in our document library?",
+        ]
+
+        for i, suggestion in enumerate(suggestions):
+
+            if st.button(
+                suggestion,
+                key=f"assistant_suggestion_{i}",
+                use_container_width=True,
+            ):
+
+                st.session_state.chat_messages.append({
+                    "role": "user",
+                    "content": suggestion,
+                })
+
+                st.session_state.page = "Search"
+
+                st.session_state.search_query = suggestion
+
+                st.rerun()
+
+    for message in st.session_state.chat_messages:
+
+        with st.chat_message(message["role"]):
+
+            st.write(message["content"])
+
+    prompt = st.chat_input(
+        "Ask a question about your organization..."
+    )
+
+    if prompt:
+
+        st.session_state.chat_messages.append({
+            "role": "user",
+            "content": prompt,
+        })
+
+        st.session_state.search_query = prompt
+
+        st.session_state.page = "Search"
+
+        st.rerun()
+
+
+# Router addition:
+#
+# elif page == "Assistant":
+#     render_assistant()
+
+# ============================================================
+# PART 9/20 — KNOWLEDGE GRAPH LIBRARY
+# ============================================================
+
+def render_knowledge_graph():
+
+    page_header(
+        "Knowledge Graph",
+        "Explore documents indexed in your knowledge graph.",
+    )
+
+    status, data = api_get(
+        "/api/v1/graph/documents"
+    )
+
+    if status != 200:
+
+        st.error(
+            data.get(
+                "detail",
+                "Graph service could not be reached."
+            )
+        )
+
+        return
+
+    nodes = data.get("nodes", [])
+
+    st.markdown("")
+
+    a, b = st.columns(2)
+
+    a.metric("Graph documents", len(nodes))
+
+    b.metric(
+        "Indexed chunks",
+        sum(
+            int(node.get("chunk_count", 0) or 0)
+            for node in nodes
+        ),
+    )
+
+    st.markdown("")
+
+    if not nodes:
+
+        st.info(
+            "No documents are currently available in the graph."
+        )
+
+        return
+
+    st.subheader("Indexed knowledge")
+
+    for node in nodes:
+
+        card_start()
+
+        st.markdown(
+            f"### ◈ {node.get('filename', 'Document')}"
+        )
+
+        st.caption(
+            f"Document ID: {node.get('id', '')}"
+        )
+
+        st.caption(
+            f"Knowledge chunks: {node.get('chunk_count', 0)}"
+        )
+
+        if st.button(
+            "Explore document",
+            key=f"graph_explore_{node.get('id')}",
+        ):
+
+            st.session_state.selected_document = node.get("id")
+
+            st.session_state.page = "Graph Explorer"
+
+            st.rerun()
+
+        card_end()
+
+        st.markdown("")
+
+
+# Router addition:
+#
+# elif page == "Knowledge Graph":
+#     render_knowledge_graph()
+
+# ============================================================
+# PART 10/20 — GRAPH DOCUMENT EXPLORER
+# ============================================================
+
+def render_graph_explorer():
+
+    document_id = st.session_state.get(
+        "selected_document"
+    )
+
+    if not document_id:
+
+        st.info("Choose a graph document to explore.")
+
+        if st.button("Return to graph"):
+            st.session_state.page = "Knowledge Graph"
+            st.rerun()
+
+        return
+
+    if st.button("← Back to knowledge graph"):
+        st.session_state.page = "Knowledge Graph"
+        st.rerun()
+
+    status, data = api_get(
+        f"/api/v1/graph/explore/{document_id}"
+    )
+
+    if status != 200:
+
+        st.error(
+            data.get(
+                "detail",
+                "Graph exploration is currently unavailable."
+            )
+        )
+
+        st.caption(
+            "The backend graph-exploration route needs "
+            "to be corrected and tested."
+        )
+
+        return
+
+    page_header(
+        data.get("filename", "Graph Explorer"),
+        "Explore the document's indexed knowledge chunks.",
+    )
+
+    chunks = data.get("chunks", [])
+
+    st.metric("Chunks", len(chunks))
+
+    if not chunks:
+
+        st.info("No chunks are available.")
+
+        return
+
+    for chunk in chunks:
+
+        card_start()
+
+        st.markdown(
+            f"**Chunk {chunk.get('chunk_index', 0)}**"
+        )
+
+        st.write(chunk.get("text", ""))
+
+        card_end()
+
+        st.markdown("")
+
+
+# Router addition:
+#
+# elif page == "Graph Explorer":
+#     render_graph_explorer()
+
+
+
         
     
     
