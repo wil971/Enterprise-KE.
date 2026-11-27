@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Optional
+import httpx
 
 import jwt
 from fastapi import (
