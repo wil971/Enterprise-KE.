@@ -696,7 +696,6 @@ async def create_invitation(
             User.email == email,
         )
     )
-
     if existing.scalar_one_or_none():
         raise HTTPException(409, "User already exists.") 
 pending_invitation = await db.execute()
@@ -705,18 +704,15 @@ Invitation.tenant_id == user.tenant_id,
 Invitation.email == email,
 Invitation.accepted_at.is_(None),
 Invitation.expires_at > utc_now(),
-     (
+   )
 
 )
-
 if pending_invitation.scalar_one_or_none():
         raise HTTPException(
             409,
             "A pending invitation already exists for this email.",
         )
-
 raw_token = secrets.token_urlsafe(32)
-
 from datetime import timedelta
 
 
