@@ -2742,6 +2742,269 @@ def render_spaces_workspace():
             disabled=True,
             help="Requires Spaces backend implementation."
         )
+        # ============================================================
+# PART 24 — PEOPLE AND KNOWLEDGE PROFILES
+# ============================================================
+
+def render_people_workspace():
+    page_header(
+        "People",
+        "Find people and understand organizational expertise."
+    )
+
+    search = st.text_input(
+        "Search people",
+        placeholder="Name, team, or expertise..."
+    )
+
+    try:
+        response = api_get("/api/v1/team")
+
+        if response and response.get("success"):
+            data = response.get("data", [])
+
+            if isinstance(data, dict):
+                data = data.get(
+                    "members",
+                    data.get("users", [])
+                )
+
+            if data:
+                for person in data:
+                    name = person.get(
+                        "full_name",
+                        "Unnamed member"
+                    )
+                    email = person.get("email", "")
+                    role = person.get("role", "Member")
+
+                    if search and search.lower() not in (
+                        name + " " + email + " " + role
+                    ).lower():
+                        continue
+
+                    with st.container(border=True):
+                        st.markdown(f"### {name}")
+                        st.write(email)
+                        st.caption(role)
+            else:
+                st.info("No people records returned.")
+
+        else:
+            st.warning(
+                "People data is not currently available."
+            )
+
+    except Exception:
+        st.warning(
+            "Unable to retrieve people data from the backend."
+        )
+
+    st.caption(
+        "Expertise profiles and knowledge contribution "
+        "mapping require additional backend capabilities."
+    )
+    # ============================================================
+# PART 25 — TEAM WORKSPACES
+# ============================================================
+
+def render_team_workspaces():
+    page_header(
+        "Team Workspaces",
+        "Explore organizational teams and their knowledge."
+    )
+
+    try:
+        response = api_get("/api/v1/team")
+
+        if response and response.get("success"):
+            data = response.get("data", [])
+
+            if isinstance(data, dict):
+                data = data.get(
+                    "members",
+                    data.get("users", [])
+                )
+
+            if data:
+                st.subheader("Organization members")
+
+                for member in data:
+                    name = member.get(
+                        "full_name",
+                        "Member"
+                    )
+                    role = member.get("role", "Member")
+                    email = member.get("email", "")
+
+                    with st.container(border=True):
+                        st.markdown(f"**{name}**")
+                        st.caption(
+                            f"{role} · {email}"
+                        )
+            else:
+                st.info("No team data available.")
+
+        else:
+            st.warning(
+                "Team endpoint did not return usable data."
+            )
+
+    except Exception:
+        st.warning(
+            "Team information is currently unavailable."
+        )
+
+    st.info(
+        "Team creation, team membership, team-owned spaces, "
+        "and team knowledge permissions require dedicated "
+        "backend support."
+    )
+    # ============================================================
+# PART 26 — ACTIVITY INTELLIGENCE
+# ============================================================
+
+def render_activity_workspace():
+    page_header(
+        "Activity",
+        "Review activity across your knowledge workspace."
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        event_filter = st.selectbox(
+            "Activity type",
+            [
+                "All events",
+                "Search",
+                "Document activity",
+                "Authentication",
+                "Organization events"
+            ]
+        )
+
+    with col2:
+        search = st.text_input(
+            "Filter activity",
+            placeholder="Search event details..."
+        )
+
+    try:
+        response = api_get("/api/v1/audit")
+
+        if response and response.get("success"):
+            events = response.get("data", [])
+
+            if isinstance(events, dict):
+                events = events.get(
+                    "events",
+                    events.get("items", [])
+                )
+
+            if events:
+                for event in events:
+                    action = event.get(
+                        "action",
+                        event.get(
+                            "event_type",
+                            "Activity"
+                        )
+                    )
+
+                    details = event.get("details", "")
+                    actor = event.get(
+                        "user_id",
+                        event.get("actor", "Unknown")
+                    )
+                    timestamp = event.get(
+                        "created_at",
+                        event.get("timestamp", "")
+                    )
+
+                    text = (
+                        f"{action} {details} {actor}"
+                    )
+
+                    if search and search.lower() not in (
+                        text.lower()
+                    ):
+                        continue
+
+                    with st.container(border=True):
+                        st.markdown(f"**{action}**")
+                        st.write(details)
+                        st.caption(
+                            f"{actor} · {timestamp}"
+                        )
+            else:
+                st.info("No activity records available.")
+
+        else:
+            st.info(
+                "The audit endpoint did not return activity."
+            )
+
+    except Exception:
+        st.info(
+            "Activity information is currently unavailable."
+        )
+        # ============================================================
+# PART 27 — WORKFLOW CENTER
+# ============================================================
+
+def render_workflows():
+    page_header(
+        "Workflows",
+        "Manage knowledge-driven processes."
+    )
+
+    tab1, tab2, tab3 = st.tabs([
+        "My workflows",
+        "Templates",
+        "Execution history"
+    ])
+
+    with tab1:
+        st.subheader("My workflows")
+
+        st.info(
+            "Your organization's configured workflows will "
+            "appear here once workflow APIs are available."
+        )
+
+    with tab2:
+        st.subheader("Workflow templates")
+
+        templates = [
+            "Document review",
+            "Knowledge approval",
+            "Research request",
+            "Information onboarding",
+            "Content verification"
+        ]
+
+        for template in templates:
+            with st.container(border=True):
+                st.write(template)
+                st.caption(
+                    "Template interface concept — "
+                    "not an active workflow."
+                )
+
+    with tab3:
+        st.subheader("Execution history")
+
+        st.info(
+            "Workflow execution history requires a workflow "
+            "engine and backend event persistence."
+        )
+
+    st.button(
+        "Create workflow",
+        disabled=True,
+        help="Workflow creation is not connected yet."
+    )
         
         
                     
