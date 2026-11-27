@@ -125,6 +125,34 @@ CORS_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+# ============================================================
+# GOOGLE OAUTH — CONFIGURATION
+# ============================================================
+
+GOOGLE_CLIENT_ID = os.getenv("CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("CLIENT_SECRET", "").strip()
+
+GOOGLE_CALLBACK_URL = (
+    f"{BACKEND_PUBLIC_URL}/api/v1/auth/google/callback"
+)
+
+GOOGLE_AUTHORIZATION_URL = (
+    "https://accounts.google.com/o/oauth2/v2/auth"
+)
+
+GOOGLE_TOKEN_URL = (
+    "https://oauth2.googleapis.com/token"
+)
+
+GOOGLE_USERINFO_URL = (
+    "https://openidconnect.googleapis.com/v1/userinfo"
+)
+
+GOOGLE_SCOPES = [
+    "openid",
+    "email",
+    "profile",
+]
 
 
 engine = create_async_engine(
