@@ -618,6 +618,12 @@ async def current_user_profile(
         "full_name": user.full_name,
         "role": user.role,
         }
+    # ============================================================
+# GOOGLE OAUTH — STATE SECURITY
+# ============================================================
+
+def generate_oauth_state() -> str:
+    return secrets.token_urlsafe(32)
 
 
 async def write_audit(
