@@ -3533,7 +3533,381 @@ def render_advanced_search():
         "controls here. They will only affect server-side "
         "search when supported by the API."
     )
-        
+      # ============================================================
+# PART 35 — PERSONAL KNOWLEDGE SHORTCUTS
+# ============================================================
+
+def render_personal_shortcuts():
+    page_header(
+        "Personal Shortcuts",
+        "Quick access to frequently used knowledge areas."
+    )
+
+    shortcut_options = [
+        "Search",
+        "Assistant",
+        "Documents",
+        "Knowledge Graph",
+        "Discover",
+        "Spaces",
+        "People",
+        "Sources",
+        "Activity"
+    ]
+
+    selected = st.multiselect(
+        "Choose your shortcuts",
+        shortcut_options,
+        default=[
+            "Search",
+            "Assistant",
+            "Documents",
+            "Knowledge Graph"
+        ],
+        key="personal_shortcuts_35"
+    )
+
+    st.subheader("Your shortcuts")
+
+    if selected:
+        cols = st.columns(2)
+
+        for index, item in enumerate(selected):
+            with cols[index % 2]:
+                if st.button(
+                    item,
+                    use_container_width=True,
+                    key=f"shortcut_35_{index}"
+                ):
+                    st.session_state["page"] = item
+                    st.rerun()
+    else:
+        st.info("Select shortcuts above to display them.")
+
+    st.caption(
+        "Shortcuts are currently session-level selections. "
+        "Persistent personal preferences require a backend "
+        "or user-preference storage API."
+    )
+    # ============================================================
+# PART 36 — USER EXPERIENCE PREFERENCES
+# ============================================================
+
+def render_experience_preferences():
+    page_header(
+        "Experience Preferences",
+        "Configure your personal workspace experience."
+    )
+
+    tab1, tab2, tab3 = st.tabs([
+        "Interface",
+        "Search",
+        "Workspace"
+    ])
+
+    with tab1:
+        st.subheader("Interface preferences")
+
+        compact_mode = st.checkbox(
+            "Compact interface",
+            key="pref_compact_36"
+        )
+
+        show_timestamps = st.checkbox(
+            "Show timestamps",
+            value=True,
+            key="pref_timestamps_36"
+        )
+
+        show_descriptions = st.checkbox(
+            "Show page descriptions",
+            value=True,
+            key="pref_descriptions_36"
+        )
+
+    with tab2:
+        st.subheader("Search preferences")
+
+        default_search_limit = st.selectbox(
+            "Default search result count",
+            [10, 20, 50],
+            index=1,
+            key="pref_search_limit_36"
+        )
+
+        search_in_content = st.checkbox(
+            "Include content snippets",
+            value=True,
+            key="pref_search_snippets_36"
+        )
+
+    with tab3:
+        st.subheader("Workspace preferences")
+
+        preferred_start_page = st.selectbox(
+            "Preferred starting page",
+            [
+                "Home",
+                "Search",
+                "Assistant",
+                "Documents",
+                "Discover"
+            ],
+            key="pref_start_page_36"
+        )
+
+    st.divider()
+
+    st.write("Current session preferences")
+
+    st.json({
+        "compact_mode": compact_mode,
+        "show_timestamps": show_timestamps,
+        "show_descriptions": show_descriptions,
+        "default_search_limit": default_search_limit,
+        "search_snippets": search_in_content,
+        "starting_page": preferred_start_page
+    })
+
+    st.caption(
+        "These preferences are currently stored in the "
+        "Streamlit session, not permanently in your account."
+    )
+    # ============================================================
+# PART 37 — WORKSPACE HEALTH
+# ============================================================
+
+def render_workspace_health():
+    page_header(
+        "Workspace Health",
+        "Review the availability of connected workspace services."
+    )
+
+    if st.button(
+        "Refresh status",
+        key="refresh_health_37"
+    ):
+        st.session_state["health_refresh_37"] = True
+
+    try:
+        health = api_health()
+
+        if health:
+            st.success("Health endpoint returned a response.")
+
+            st.json(health)
+
+        else:
+            st.warning(
+                "The backend health endpoint returned no "
+                "usable status information."
+            )
+
+    except Exception as exc:
+        st.error(
+            "Unable to reach the backend health endpoint."
+        )
+        st.caption(str(exc))
+
+    st.divider()
+
+    st.subheader("Service components")
+
+    components = [
+        ("Application", "Backend health endpoint"),
+        ("Authentication", "Authentication API"),
+        ("Search", "Search API"),
+        ("Document storage", "Document API"),
+        ("Knowledge graph", "Graph API"),
+        ("Connectors", "Connector API"),
+    ]
+
+    for name, description in components:
+        with st.container(border=True):
+            st.markdown(f"**{name}**")
+            st.caption(description)
+
+    st.info(
+        "The component list is informational. Individual "
+        "services are not independently verified unless "
+        "their health checks are implemented."
+    )
+    # ============================================================
+# PART 38 — INTEGRATION CATALOG
+# ============================================================
+
+def render_integration_catalog():
+    page_header(
+        "Integration Catalog",
+        "Explore enterprise systems that can connect to knowledge."
+    )
+
+    integrations = [
+        {
+            "name": "Google Drive",
+            "category": "File storage",
+            "description": "Documents and shared drive knowledge."
+        },
+        {
+            "name": "Microsoft SharePoint",
+            "category": "Enterprise content",
+            "description": "Sites, libraries, and organization content."
+        },
+        {
+            "name": "Microsoft OneDrive",
+            "category": "File storage",
+            "description": "Personal and shared documents."
+        },
+        {
+            "name": "Slack",
+            "category": "Communication",
+            "description": "Conversation and team knowledge."
+        },
+        {
+            "name": "Notion",
+            "category": "Knowledge management",
+            "description": "Pages and organized knowledge."
+        },
+        {
+            "name": "Confluence",
+            "category": "Documentation",
+            "description": "Documentation and knowledge pages."
+        },
+        {
+            "name": "Websites",
+            "category": "Web content",
+            "description": "Public or authorized website content."
+        },
+    ]
+
+    search = st.text_input(
+        "Find an integration",
+        placeholder="Search integrations...",
+        key="integration_catalog_search_38"
+    )
+
+    category = st.selectbox(
+        "Category",
+        [
+            "All categories",
+            "File storage",
+            "Enterprise content",
+            "Communication",
+            "Knowledge management",
+            "Documentation",
+            "Web content"
+        ],
+        key="integration_category_38"
+    )
+
+    filtered = integrations
+
+    if search:
+        filtered = [
+            item for item in filtered
+            if search.lower() in (
+                item["name"] + " " +
+                item["category"] + " " +
+                item["description"]
+            ).lower()
+        ]
+
+    if category != "All categories":
+        filtered = [
+            item for item in filtered
+            if item["category"] == category
+        ]
+
+    for integration in filtered:
+        with st.container(border=True):
+            st.markdown(
+                f"### {integration['name']}"
+            )
+
+            st.caption(integration["category"])
+
+            st.write(
+                integration["description"]
+            )
+
+            st.info(
+                "Availability and connection status have "
+                "not been verified for this integration."
+            )
+
+            st.button(
+                "Configure integration",
+                disabled=True,
+                key=(
+                    "integration_config_38_" +
+                    integration["name"]
+                ),
+                help=(
+                    "OAuth, permissions, and synchronization "
+                    "must be implemented in the backend."
+                )
+            )
+            # ============================================================
+# PART 39 — HELP AND PRODUCT SUPPORT
+# ============================================================
+
+def render_help_center():
+    page_header(
+        "Help Center",
+        "Guidance for using Enterprise GraphRAG."
+    )
+
+    topics = {
+        "Getting started": [
+            "Understanding your workspace",
+            "Using enterprise search",
+            "Exploring knowledge"
+        ],
+        "Search and discovery": [
+            "Search for documents",
+            "Use filters",
+            "Explore related knowledge"
+        ],
+        "Documents and sources": [
+            "Upload documents",
+            "Understand source information",
+            "Manage knowledge content"
+        ],
+        "Knowledge graph": [
+            "Explore graph relationships",
+            "Navigate connected documents",
+            "Understand graph results"
+        ],
+        "Organization": [
+            "Organization settings",
+            "Members and roles",
+            "Permissions"
+        ],
+        "Troubleshooting": [
+            "Search availability",
+            "Backend connection",
+            "Connector availability"
+        ]
+    }
+
+    for category, articles in topics.items():
+        with st.expander(category):
+            for article in articles:
+                st.write(f"• {article}")
+
+    st.divider()
+
+    st.subheader("System information")
+
+    st.write("Product: Enterprise GraphRAG")
+    st.write("Frontend framework: Streamlit")
+    st.write("Backend: API-connected service")
+
+    st.caption(
+        "This help center contains navigation guidance. "
+        "A complete documentation system can be connected "
+        "as the product documentation expands."
+    )
                     
 
 
