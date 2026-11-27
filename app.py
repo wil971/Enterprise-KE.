@@ -2618,6 +2618,130 @@ def run_application():
 if authentication_router():
 
     run_application()
+    # ============================================================
+# PART 21 — COLLABORATION WORKSPACE
+# ============================================================
+
+def render_collaboration():
+    page_header(
+        "Collaboration",
+        "Work together around organizational knowledge."
+    )
+
+    st.subheader("Shared workspace")
+
+    tab1, tab2, tab3 = st.tabs([
+        "Shared knowledge",
+        "Team collaboration",
+        "Recent activity"
+    ])
+
+    with tab1:
+        st.info(
+            "Shared knowledge will display content shared "
+            "across your organization once connected."
+        )
+
+    with tab2:
+        st.info(
+            "Team collaboration requires workspace and "
+            "collaboration APIs from the backend."
+        )
+
+    with tab3:
+        st.info(
+            "Recent collaboration events will appear here "
+            "when activity data is available."
+        )
+        # ============================================================
+# PART 22 — WORKSPACE PERMISSIONS
+# ============================================================
+
+def render_permissions():
+    page_header(
+        "Permissions",
+        "Manage access to organizational knowledge."
+    )
+
+    st.subheader("Access management")
+
+    tab1, tab2, tab3 = st.tabs([
+        "Members",
+        "Roles",
+        "Access policies"
+    ])
+
+    with tab1:
+        st.write("Workspace membership")
+        st.info(
+            "Membership management requires verified "
+            "organization membership APIs."
+        )
+
+    with tab2:
+        st.write("Role configuration")
+        st.info(
+            "Role editing will be connected to the backend "
+            "role and permission system."
+        )
+
+    with tab3:
+        st.write("Knowledge access policies")
+        st.info(
+            "Access policies will be displayed and managed "
+            "when policy APIs are implemented."
+        )
+        # ============================================================
+# PART 23 — KNOWLEDGE SPACES EXPERIENCE
+# ============================================================
+
+def render_spaces_workspace():
+    page_header(
+        "Knowledge Spaces",
+        "Organize knowledge into focused workspaces."
+    )
+
+    search = st.text_input(
+        "Find a space",
+        placeholder="Search knowledge spaces..."
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("My spaces")
+
+    with col2:
+        st.subheader("Shared spaces")
+
+    st.info(
+        "Space creation, membership, document organization, "
+        "and sharing require a persistent Spaces API. "
+        "The current backend connection has not been verified "
+        "for these operations."
+    )
+
+    with st.expander("Create a knowledge space"):
+        space_name = st.text_input(
+            "Space name",
+            key="new_space_name_23"
+        )
+
+        description = st.text_area(
+            "Description",
+            key="new_space_description_23"
+        )
+
+        visibility = st.selectbox(
+            "Visibility",
+            ["Private", "Organization", "Selected members"]
+        )
+
+        st.button(
+            "Create space",
+            disabled=True,
+            help="Requires Spaces backend implementation."
+        )
         
         
                     
