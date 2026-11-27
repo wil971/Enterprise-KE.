@@ -1743,6 +1743,247 @@ def render_graph_explorer():
 # elif page == "Graph Explorer":
 #     render_graph_explorer()
 
+# ============================================================
+# PART 11/20 — KNOWLEDGE DISCOVERY
+# ============================================================
+
+def render_discover():
+
+    page_header(
+        "Discover",
+        "Explore information connected to your organization's knowledge.",
+    )
+
+    st.markdown("### Explore by knowledge")
+
+    query = st.text_input(
+        "Discovery search",
+        placeholder="Explore a topic, project, concept or document...",
+        key="discover_query",
+    )
+
+    if st.button("Explore knowledge", type="primary"):
+
+        if query.strip():
+
+            st.session_state.search_query = query.strip()
+            st.session_state.page = "Search"
+            st.rerun()
+
+    st.divider()
+
+    st.subheader("Knowledge exploration")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        card_start()
+        st.markdown("### ◈ Connected knowledge")
+        st.caption(
+            "Explore indexed documents and relationships "
+            "within the organization's knowledge graph."
+        )
+        if st.button("Open graph", key="discover_graph"):
+            st.session_state.page = "Knowledge Graph"
+            st.rerun()
+        card_end()
+
+    with col2:
+        card_start()
+        st.markdown("### ▤ Document collections")
+        st.caption(
+            "Browse the documents available to your workspace."
+        )
+        if st.button("Browse documents", key="discover_docs"):
+            st.session_state.page = "Documents"
+            st.rerun()
+        card_end()
+
+    st.subheader("Recently indexed knowledge")
+
+    status, data = api_get("/api/v1/graph/documents")
+
+    if status != 200:
+        st.warning("Knowledge discovery data is unavailable.")
+        return
+
+    nodes = data.get("nodes", [])
+
+    if not nodes:
+        st.info("No indexed knowledge is available yet.")
+        return
+
+    for node in nodes[:10]:
+
+        card_start()
+
+        st.markdown(
+            f"**{node.get('filename', 'Document')}**"
+        )
+
+        st.caption(
+            f"{node.get('chunk_count', 0)} knowledge chunks"
+        )
+
+        if st.button(
+            "Explore",
+            key=f"discover_node_{node.get('id')}",
+        ):
+            st.session_state.selected_document = node.get("id")
+            st.session_state.page = "Graph Explorer"
+            st.rerun()
+
+        card_end()
+    
+# ============================================================
+# PART 12/20 — KNOWLEDGE SOURCES
+# ============================================================
+
+SUPPORTED_SOURCE_TYPES = [
+    "Manual Upload",
+    "Google Drive",
+    "Microsoft SharePoint",
+    "OneDrive",
+    "Notion",
+    "Slack",
+    "Confluence",
+    "Website",
+    "Other",
+]
+
+
+def render_sources():
+
+    page_header(
+        "Knowledge Sources",
+        "Manage the systems and content supplying your knowledge.",
+    )
+
+    st.subheader("Source overview")
+
+    st.caption(
+        "The current backend supports content ingestion. "
+        "External OAuth integrations and automated synchronization "
+        "must be implemented separately."
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Available source types", len(SUPPORTED_SOURCE_TYPES))
+    c2.metric("OAuth integrations", "Not implemented")
+    c3.metric("Automated synchronization", "Not implemented")
+
+    st.divider()
+
+    st.subheader("Available source types")
+
+    for source in SUPPORTED_SOURCE_TYPES:
+
+        card_start()
+
+        st.markdown(f"**{source}**")
+
+        if source == "Manual Upload":
+            st.caption("Available through the document upload endpoint.")
+            if st.button(
+                "Upload documents",
+                key="source_upload",
+            ):
+                st.session_state.page = "Documents"
+                st.rerun()
+
+        else:
+            st.caption(
+                "Connector integration is not yet configured."
+            )
+
+        card_end()
+        
+# ============================================================
+# PART 13/20 — CONTENT INGESTION
+# ============================================================
+
+def render_connector_ingestion():
+
+    page_header(
+        "Content Ingestion",
+        "Bring external knowledge into your GraphRAG workspace.",
+    )
+
+    st.info(
+        "This interface uses the backend's generic connector "
+        "ingestion endpoint. It submits content supplied here; "
+        "it does not automatically connect to external accounts."
+    )
+
+    with st.form("connector_ingest_form"):
+
+        source_name = st.selectbox(
+            "Source",
+            SUPPORTED_SOURCE_TYPES,
+        )
+
+        content_title = st.text_input(
+            "Content title",
+            placeholder="Document or content title",
+        )
+
+        source_reference = st.text_input(
+            "Source reference",
+            placeholder="Optional URL or external reference",
+        )
+
+        content = st.text_area(
+            "Content",
+            height=300,
+            placeholder="Paste the knowledge content to ingest...",
+        )
+
+        submitted = st.form_submit_button(
+            "Submit knowledge",
+            type="primary",
+        )
+
+        if submitted:
+
+            if not content_title.strip() or not content.strip():
+
+                st.warning(
+                    "A title and content are required."
+                )
+
+            else:
+
+                payload = {
+                    "source": source_name,
+                    "title": content_title.strip(),
+                    "content": content.strip(),
+                    "reference": source_reference.strip(),
+                }
+
+                with st.spinner("Submitting content..."):
+
+                    status, result = api_post(
+                        "/api/v1/connectors/ingest",
+                        payload,
+                    )
+
+                if status in (200, 201, 202):
+
+                    st.success("Content submitted.")
+
+                    st.json(result)
+
+                else:
+
+                    st.error(
+                        result.get(
+                            "detail",
+                            "Content ingestion failed."
+                        )
+                    )
+                    
+
 
 
         
