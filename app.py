@@ -876,5 +876,537 @@ def run_application():
         st.session_state.page = "Home"
         st.rerun()
         
+# ============================================================
+# PART 4/20 — KNOWLEDGE INTELLIGENCE HOME
+# ============================================================
+
+def render_home():
+
+    page_header(
+        "Good to see you, " + user_display_name(),
+        "Discover, search and connect knowledge across your organization.",
+    )
+
+    st.markdown("")
+
+    # Main enterprise search entry point
+    st.markdown("""
+    <div style="
+        background:white;
+        border:1px solid #e4e9f0;
+        border-radius:18px;
+        padding:22px;
+        box-shadow:0 5px 25px rgba(15,23,42,.035);
+    ">
+        <div style="
+            font-size:17px;
+            font-weight:700;
+            margin-bottom:5px;
+        ">
+            What are you looking for?
+        </div>
+
+        <div style="
+            font-size:12px;
+            color:#7b8492;
+            margin-bottom:15px;
+        ">
+            Search your organization's knowledge or ask a question.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    query = st.text_input(
+        "Search organizational knowledge",
+        placeholder="Search documents, projects, policies, people...",
+        label_visibility="collapsed",
+        key="home_search",
+    )
+
+    c1, c2, c3 = st.columns([1, 1, 3])
+
+    with c1:
+        if st.button(
+            "Search knowledge",
+            type="primary",
+            use_container_width=True,
+        ):
+            if query.strip():
+                st.session_state.search_query = query.strip()
+                st.session_state.page = "Search"
+                st.rerun()
+
+    with c2:
+        if st.button(
+            "Ask AI",
+            use_container_width=True,
+        ):
+            if query.strip():
+                st.session_state.chat_messages.append({
+                    "role": "user",
+                    "content": query.strip(),
+                })
+            st.session_state.page = "Assistant"
+            st.rerun()
+
+    st.markdown("")
+
+    # Knowledge overview
+    st.subheader("Your knowledge workspace")
+
+    m1, m2, m3, m4 = st.columns(4)
+
+    m1.metric("Documents", "—", help="Connected document collection")
+    m2.metric("Knowledge sources", "—", help="Connected source systems")
+    m3.metric("Knowledge connections", "—", help="Graph relationships")
+    m4.metric("People", "—", help="Workspace members")
+
+    st.caption(
+        "Metrics will be populated from backend endpoints "
+        "as those integrations are implemented."
+    )
+
+    st.markdown("")
+
+    # AI Assistant entry card
+    left, right = st.columns([1.5, 1])
+
+    with left:
+
+        card_start()
+
+        st.markdown(
+            '<div class="eg-card-title">✧ Knowledge Assistant</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            """
+            <div class="eg-card-subtitle">
+                Ask questions about your organization's knowledge
+                and find answers across information sources.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("")
+
+        if st.button(
+            "Start a conversation",
+            type="primary",
+            key="home_start_assistant",
+        ):
+            st.session_state.page = "Assistant"
+            st.rerun()
+
+        card_end()
+
+    with right:
+
+        card_start()
+
+        st.markdown(
+            '<div class="eg-card-title">◈ Knowledge Graph</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            """
+            <div class="eg-card-subtitle">
+                Explore the connections between documents,
+                concepts and organizational information.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("")
+
+        if st.button(
+            "Explore graph",
+            key="home_graph",
+        ):
+            st.session_state.page = "Knowledge Graph"
+            st.rerun()
+
+        card_end()
+
+    st.markdown("")
+
+    # Discovery entry points
+    st.subheader("Explore your knowledge")
+
+    d1, d2, d3 = st.columns(3)
+
+    with d1:
+        card_start()
+        st.markdown("### ▤ Documents")
+        st.caption(
+            "Find and review the documents in your workspace."
+        )
+        if st.button("Browse documents", key="home_docs"):
+            st.session_state.page = "Documents"
+            st.rerun()
+        card_end()
+
+    with d2:
+        card_start()
+        st.markdown("### ⇄ Sources")
+        st.caption(
+            "Explore the systems supplying organizational knowledge."
+        )
+        if st.button("View sources", key="home_sources"):
+            st.session_state.page = "Sources"
+            st.rerun()
+        card_end()
+
+    with d3:
+        card_start()
+        st.markdown("### ◉ Discover")
+        st.caption(
+            "Explore knowledge and find information related to your work."
+        )
+        if st.button("Discover knowledge", key="home_discover"):
+            st.session_state.page = "Discover"
+            st.rerun()
+        card_end()
+
+
+# ------------------------------------------------------------
+# UPDATE THE run_application ROUTER
+# Add Home to the router's page conditions.
+# ------------------------------------------------------------
+
+# Inside run_application(), replace:
+# if page == "Home":
+#     st.title("Home")
+#
+# With:
+# if page == "Home":
+#     render_home()
+
+# ============================================================
+# PART 5/20 — ENTERPRISE SEARCH
+# ============================================================
+
+def render_search():
+
+    page_header(
+        "Search",
+        "Find information across your organization's knowledge.",
+    )
+
+    query = st.text_input(
+        "Search",
+        value=st.session_state.search_query,
+        placeholder="Search policies, projects, documents...",
+        key="enterprise_search_input",
+    )
+
+    c1, c2 = st.columns([1, 5])
+
+    with c1:
+        search_clicked = st.button(
+            "Search",
+            type="primary",
+            use_container_width=True,
+        )
+
+    with c2:
+        st.caption(
+            "Search results are restricted to your organization's "
+            "documents by the backend."
+        )
+
+    if search_clicked and query.strip():
+
+        st.session_state.search_query = query.strip()
+
+        with st.spinner("Searching your knowledge..."):
+
+            status, data = api_post(
+                "/api/v1/search",
+                {
+                    "query": query.strip(),
+                    "limit": 20,
+                },
+            )
+
+        if status == 200:
+
+            st.session_state.search_results = data
+
+        else:
+
+            st.session_state.search_results = None
+
+            st.error(
+                data.get(
+                    "detail",
+                    "Search request failed."
+                )
+            )
+
+    results = st.session_state.get(
+        "search_results"
+    )
+
+    if not results:
+        st.markdown("")
+        st.info(
+            "Enter a query to search your organizational documents."
+        )
+        return
+
+    st.markdown("")
+
+    st.markdown(
+        f"**{results.get('count', 0)} results** "
+        f"for `{results.get('query', '')}`"
+    )
+
+    st.caption(
+        f"Search mode: {results.get('search_type', 'unknown')}"
+    )
+
+    documents = results.get("results", [])
+
+    if not documents:
+
+        st.warning("No matching documents were found.")
+
+        return
+
+    for index, document in enumerate(documents):
+
+        card_start()
+
+        st.markdown(
+            f"### ▤ {document.get('filename', 'Untitled document')}"
+        )
+
+        st.caption(
+            f"Source: {document.get('source', 'Unknown')}"
+        )
+
+        snippet = document.get("snippet", "")
+
+        if snippet:
+
+            st.markdown(
+                snippet[:500]
+            )
+
+        st.markdown("")
+
+        if st.button(
+            "Open document",
+            key=f"search_open_{index}",
+        ):
+
+            st.session_state.selected_document = (
+                document.get("document_id")
+            )
+
+            st.session_state.page = "Documents"
+
+            st.rerun()
+
+        card_end()
+
+        st.markdown("")
+
+
+# In run_application(), replace the Search branch with:
+#
+# elif page == "Search":
+#     render_search()
+
+# ============================================================
+# PART 6/20 — DOCUMENT LIBRARY
+# ============================================================
+
+def upload_file_to_backend(uploaded_file):
+
+    headers = {}
+
+    if st.session_state.token:
+        headers["Authorization"] = (
+            f"Bearer {st.session_state.token}"
+        )
+
+    try:
+
+        response = requests.post(
+            f"{API_BASE}/api/v1/documents/upload",
+            headers=headers,
+            files={
+                "file": (
+                    uploaded_file.name,
+                    uploaded_file.getvalue(),
+                    uploaded_file.type or "application/octet-stream",
+                )
+            },
+            timeout=120,
+        )
+
+        try:
+            data = response.json()
+        except ValueError:
+            data = {"detail": response.text}
+
+        return response.status_code, data
+
+    except requests.RequestException as exc:
+
+        return 0, {"detail": str(exc)}
+
+
+def load_documents():
+
+    status, data = api_get(
+        "/api/v1/documents?limit=100"
+    )
+
+    if status == 200 and isinstance(data, list):
+        return data
+
+    return None
+
+
+def render_documents():
+
+    page_header(
+        "Documents",
+        "Manage and explore your organization's knowledge documents.",
+    )
+
+    tab_library, tab_upload = st.tabs([
+        "Library",
+        "Upload documents",
+    ])
+
+    with tab_upload:
+
+        st.subheader("Add knowledge to your workspace")
+
+        st.caption(
+            "Upload documents to extract their text and index "
+            "them in the knowledge graph."
+        )
+
+        files = st.file_uploader(
+            "Select files",
+            accept_multiple_files=True,
+            key="eg_doc_upload",
+        )
+
+        if files:
+
+            if st.button(
+                "Upload and index",
+                type="primary",
+            ):
+
+                for file in files:
+
+                    with st.spinner(
+                        f"Processing {file.name}..."
+                    ):
+
+                        status, data = upload_file_to_backend(
+                            file
+                        )
+
+                    if status == 200:
+
+                        st.success(
+                            f"{file.name} indexed successfully."
+                        )
+
+                        st.json(data)
+
+                    else:
+
+                        st.error(
+                            f"{file.name}: "
+                            f"{data.get('detail', 'Upload failed')}"
+                        )
+
+    with tab_library:
+
+        if st.button(
+            "Refresh library",
+            key="eg_refresh_documents",
+        ):
+            st.rerun()
+
+        documents = load_documents()
+
+        if documents is None:
+
+            st.error(
+                "Could not load documents from your backend."
+            )
+
+            return
+
+        st.markdown(
+            f"**{len(documents)} documents**"
+        )
+
+        if not documents:
+
+            st.info(
+                "Your document library is empty. "
+                "Upload documents to begin."
+            )
+
+            return
+
+        for document in documents:
+
+            card_start()
+
+            st.markdown(
+                f"### ▤ {document.get('filename', 'Document')}"
+            )
+
+            st.caption(
+                f"Source: {document.get('source', 'Unknown')}"
+            )
+
+            created_at = document.get("created_at")
+
+            if created_at:
+                st.caption(f"Created: {created_at}")
+
+            document_id = document.get("id")
+
+            if st.button(
+                "View document",
+                key=f"doc_view_{document_id}",
+            ):
+
+                st.session_state.selected_document = document_id
+
+                st.session_state.page = "Document Viewer"
+
+                st.rerun()
+
+            card_end()
+
+
+# Add "Document Viewer" to navigation in Part 3
+# under CONTENT:
+# ("Document Viewer", "▣")
+#
+# In run_application(), add:
+#
+# elif page == "Documents":
+#     render_documents()
+
+        
     
     
