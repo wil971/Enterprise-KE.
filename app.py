@@ -3176,7 +3176,363 @@ def render_command_center():
         "analytics, and workflow execution will be populated "
         "through verified backend integrations."
     )
-        
+        # ============================================================
+# PART 31 — ENTERPRISE ADMINISTRATION
+# ============================================================
+
+def render_enterprise_admin():
+    page_header(
+        "Enterprise Administration",
+        "Manage your enterprise knowledge environment."
+    )
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Overview",
+        "Workspace",
+        "Members",
+        "Governance"
+    ])
+
+    with tab1:
+        st.subheader("Administration overview")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Organization", "Configured")
+        c2.metric("Workspace", "Active")
+        c3.metric("Administration", "Centralized")
+
+        st.info(
+            "Organization metrics will appear when verified "
+            "administrative APIs are connected."
+        )
+
+    with tab2:
+        st.subheader("Workspace management")
+
+        st.text_input(
+            "Workspace name",
+            disabled=True,
+            key="admin_workspace_name_31"
+        )
+
+        st.text_area(
+            "Workspace description",
+            disabled=True,
+            key="admin_workspace_desc_31"
+        )
+
+        st.caption(
+            "Workspace editing requires verified backend "
+            "administration endpoints."
+        )
+
+    with tab3:
+        st.subheader("Member administration")
+
+        st.info(
+            "Member invitations, role changes, deactivation, "
+            "and access management must be connected to "
+            "verified backend operations."
+        )
+
+    with tab4:
+        st.subheader("Governance")
+
+        governance_items = [
+            "Knowledge access governance",
+            "Content ownership",
+            "Retention policies",
+            "Workspace policies",
+            "Organizational controls"
+        ]
+
+        for item in governance_items:
+            st.write(f"• {item}")
+
+        st.caption(
+            "Policy controls are interface components only "
+            "until the corresponding backend APIs exist."
+    )
+        # ============================================================
+# PART 32 — SECURITY CENTER
+# ============================================================
+
+def render_security_center():
+    page_header(
+        "Security Center",
+        "Security, access, and protection of enterprise knowledge."
+    )
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Overview",
+        "Authentication",
+        "Access control",
+        "Security events"
+    ])
+
+    with tab1:
+        st.subheader("Security overview")
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("Authentication", "API dependent")
+        c2.metric("Access control", "API dependent")
+        c3.metric("Security monitoring", "API dependent")
+
+        st.info(
+            "Security status must be derived from actual "
+            "backend configuration, not frontend assumptions."
+        )
+
+    with tab2:
+        st.subheader("Authentication controls")
+
+        st.write("Authentication configuration")
+        st.write("Password policy")
+        st.write("Session management")
+        st.write("Identity provider integration")
+
+        st.caption(
+            "These settings require backend security "
+            "configuration and appropriate administrator access."
+        )
+
+    with tab3:
+        st.subheader("Access controls")
+
+        st.write("Role-based access")
+        st.write("Organization membership")
+        st.write("Document-level permissions")
+        st.write("Access enforcement")
+
+        st.info(
+            "The interface does not itself enforce "
+            "authorization. Access must be enforced by "
+            "the backend on every protected request."
+        )
+
+    with tab4:
+        st.subheader("Security events")
+
+        st.info(
+            "Security event records require a backend "
+            "security and audit event source."
+        )
+        # ============================================================
+# PART 33 — ORGANIZATION PROFILE
+# ============================================================
+
+def render_organization_profile():
+    page_header(
+        "Organization",
+        "Organization identity and workspace information."
+    )
+
+    user = current_user() or {}
+
+    org_id = organization_id()
+
+    tab1, tab2, tab3 = st.tabs([
+        "Profile",
+        "Structure",
+        "Configuration"
+    ])
+
+    with tab1:
+        st.subheader("Organization profile")
+
+        st.text_input(
+            "Organization identifier",
+            value=str(org_id or ""),
+            disabled=True,
+            key="org_id_profile_33"
+        )
+
+        st.text_input(
+            "Current account",
+            value=str(
+                user.get("email", "")
+            ),
+            disabled=True,
+            key="org_account_profile_33"
+        )
+
+        st.info(
+            "Organization name, logo, industry, and "
+            "organization profile editing require verified "
+            "organization APIs."
+        )
+
+    with tab2:
+        st.subheader("Organization structure")
+
+        structure = [
+            "Organization",
+            "Departments",
+            "Teams",
+            "Workspaces",
+            "Members"
+        ]
+
+        for item in structure:
+            st.write(f"• {item}")
+
+        st.caption(
+            "This describes the organizational structure "
+            "available for future connected management."
+        )
+
+    with tab3:
+        st.subheader("Organization configuration")
+
+        st.write("Organization-wide preferences")
+        st.write("Workspace defaults")
+        st.write("Organizational settings")
+
+        st.warning(
+            "Configuration changes are not enabled in "
+            "this interface until their APIs are verified."
+    )
+        # ============================================================
+# PART 34 — ADVANCED SEARCH WORKSPACE
+# ============================================================
+
+def render_advanced_search():
+    page_header(
+        "Advanced Search",
+        "Refine knowledge discovery using search criteria."
+    )
+
+    query = st.text_input(
+        "Search knowledge",
+        placeholder="Enter your search query...",
+        key="advanced_search_query_34"
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        source_filter = st.selectbox(
+            "Source",
+            [
+                "All sources",
+                "Documents",
+                "Manual uploads",
+                "Connector content"
+            ],
+            key="advanced_source_34"
+        )
+
+    with col2:
+        sort_order = st.selectbox(
+            "Sort results",
+            [
+                "Relevance",
+                "Newest",
+                "Oldest"
+            ],
+            key="advanced_sort_34"
+        )
+
+    with col3:
+        result_limit = st.selectbox(
+            "Results",
+            [10, 20, 50],
+            index=1,
+            key="advanced_limit_34"
+        )
+
+    if st.button(
+        "Search",
+        type="primary",
+        use_container_width=True,
+        key="advanced_search_submit_34"
+    ):
+        if not query.strip():
+            st.warning("Enter a search query first.")
+        else:
+            payload = {
+                "query": query.strip(),
+                "limit": result_limit
+            }
+
+            try:
+                response = api_post(
+                    "/api/v1/search",
+                    payload
+                )
+
+                st.session_state[
+                    "advanced_search_results_34"
+                ] = response
+
+                st.session_state[
+                    "advanced_search_last_query_34"
+                ] = query
+
+            except Exception as exc:
+                st.error(
+                    f"Search request failed: {exc}"
+                )
+
+    results = st.session_state.get(
+        "advanced_search_results_34"
+    )
+
+    if results:
+        st.divider()
+        st.subheader("Results")
+
+        if isinstance(results, dict):
+            data = results.get("data", results)
+
+            if isinstance(data, dict):
+                result_items = data.get(
+                    "results",
+                    data.get("items", [])
+                )
+            elif isinstance(data, list):
+                result_items = data
+            else:
+                result_items = []
+
+            if result_items:
+                for item in result_items:
+                    title = item.get(
+                        "filename",
+                        item.get("title", "Untitled")
+                    )
+
+                    snippet = item.get(
+                        "snippet",
+                        item.get("content", "")
+                    )
+
+                    source = item.get(
+                        "source",
+                        "Unknown source"
+                    )
+
+                    with st.container(border=True):
+                        st.markdown(f"**{title}**")
+                        st.caption(source)
+                        st.write(snippet)
+
+            else:
+                st.info(
+                    "The API response contained no result items."
+                )
+
+        else:
+            st.info(
+                "The search response format was unexpected."
+            )
+
+    st.caption(
+        "Advanced source filtering and sorting are visual "
+        "controls here. They will only affect server-side "
+        "search when supported by the API."
+    )
         
                     
 
