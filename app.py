@@ -1983,6 +1983,267 @@ def render_connector_ingestion():
                         )
                     )
                     
+# ============================================================
+# PART 14/20 — SPACES
+# ============================================================
+
+def render_spaces():
+
+    page_header(
+        "Spaces",
+        "Organize knowledge around projects, teams and topics.",
+    )
+
+    st.info(
+        "Spaces interface established. Persistent spaces, "
+        "membership, and document assignment require a Spaces "
+        "backend model and API."
+    )
+
+    st.subheader("Create a knowledge space")
+
+    with st.form("create_space_form"):
+
+        space_name = st.text_input(
+            "Space name",
+            placeholder="Research, Product, Operations...",
+        )
+
+        description = st.text_area(
+            "Description",
+            placeholder="What knowledge belongs in this space?",
+        )
+
+        visibility = st.selectbox(
+            "Visibility",
+            ["Organization", "Private"],
+        )
+
+        submit = st.form_submit_button(
+            "Prepare space",
+            type="primary",
+        )
+
+        if submit:
+
+            if not space_name.strip():
+
+                st.warning("Enter a space name.")
+
+            else:
+
+                st.warning(
+                    "Space information was entered, but it is "
+                    "not saved yet because the backend Spaces "
+                    "API is not implemented."
+                )
+
+                st.write({
+                    "name": space_name.strip(),
+                    "description": description.strip(),
+                    "visibility": visibility,
+                })
+
+    st.divider()
+
+    st.subheader("Organize knowledge")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+
+        card_start()
+
+        st.markdown("### Projects")
+
+        st.caption(
+            "Group documents and knowledge by project."
+        )
+
+        if st.button("Open documents", key="spaces_project_docs"):
+            st.session_state.page = "Documents"
+            st.rerun()
+
+        card_end()
+
+    with c2:
+
+        card_start()
+
+        st.markdown("### Departments")
+
+        st.caption(
+            "Organize knowledge around organizational departments."
+        )
+
+        if st.button("Explore teams", key="spaces_teams"):
+            st.session_state.page = "Teams"
+            st.rerun()
+
+        card_end()
+        
+# ============================================================
+# PART 15/20 — PEOPLE
+# ============================================================
+
+def render_people():
+
+    page_header(
+        "People",
+        "Explore the people in your knowledge workspace.",
+    )
+
+    status, data = api_get("/api/v1/team")
+
+    if status != 200:
+
+        st.error(
+            data.get(
+                "detail",
+                "Unable to retrieve organization members."
+            )
+        )
+
+        return
+
+    members = data if isinstance(data, list) else data.get(
+        "members",
+        data.get("users", []),
+    )
+
+    st.markdown(
+        f"**{len(members)} members**"
+    )
+
+    search = st.text_input(
+        "Find people",
+        placeholder="Search by name or email...",
+        key="people_search",
+    )
+
+    filtered = []
+
+    for member in members:
+
+        name = member.get("full_name", "")
+        email = member.get("email", "")
+
+        searchable = f"{name} {email}".lower()
+
+        if search.lower() in searchable:
+            filtered.append(member)
+
+    if not filtered:
+
+        st.info("No matching members found.")
+
+        return
+
+    for member in filtered:
+
+        card_start()
+
+        name = member.get("full_name", "Member")
+        email = member.get("email", "")
+        role = member.get("role", "Member")
+
+        st.markdown(f"### {name}")
+
+        st.caption(email)
+
+        st.markdown(
+            f'<span class="eg-pill">{role}</span>',
+            unsafe_allow_html=True,
+        )
+
+        card_end()
+
+        st.markdown("")
+        
+# ============================================================
+# PART 16/20 — TEAMS
+# ============================================================
+
+def render_teams():
+
+    page_header(
+        "Teams",
+        "Understand the people working across your organization.",
+    )
+
+    status, data = api_get("/api/v1/team")
+
+    if status != 200:
+
+        st.error(
+            data.get(
+                "detail",
+                "Team information is unavailable."
+            )
+        )
+
+        return
+
+    members = data if isinstance(data, list) else data.get(
+        "members",
+        data.get("users", []),
+    )
+
+    if not members:
+
+        st.info("No team members have been returned.")
+
+        return
+
+    roles = {}
+
+    for member in members:
+
+        role = member.get("role", "Member")
+
+        roles[role] = roles.get(role, 0) + 1
+
+    st.subheader("Organization overview")
+
+    c1, c2 = st.columns(2)
+
+    c1.metric("Members", len(members))
+
+    c2.metric("Roles", len(roles))
+
+    st.divider()
+
+    st.subheader("Organization roles")
+
+    for role, count in roles.items():
+
+        card_start()
+
+        st.markdown(f"**{role}**")
+
+        st.caption(f"{count} member(s)")
+
+        card_end()
+
+    st.divider()
+
+    st.subheader("Team members")
+
+    for member in members:
+
+        card_start()
+
+        st.markdown(
+            f"**{member.get('full_name', 'Member')}**"
+        )
+
+        st.caption(
+            member.get("email", "")
+        )
+
+        card_end()
+        
+                    
 
 
 
