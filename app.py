@@ -2243,6 +2243,383 @@ def render_teams():
 
         card_end()
         
+# ============================================================
+# PART 17/20 — ACTIVITY
+# ============================================================
+
+def render_activity():
+
+    page_header(
+        "Activity",
+        "Review activity and recorded events in your workspace.",
+    )
+
+    status, data = api_get(
+        "/api/v1/audit"
+    )
+
+    if status != 200:
+
+        st.warning(
+            "Audit information could not be loaded. "
+            "Check the audit endpoint available in your backend."
+        )
+
+        return
+
+    events = data if isinstance(data, list) else data.get(
+        "events",
+        data.get("items", []),
+    )
+
+    st.markdown(
+        f"**{len(events)} returned events**"
+    )
+
+    if not events:
+
+        st.info("No activity records were returned.")
+
+        return
+
+    for event in events:
+
+        card_start()
+
+        action = event.get(
+            "action",
+            event.get("event_type", "Activity"),
+        )
+
+        st.markdown(f"### {action}")
+
+        actor = event.get(
+            "user_id",
+            event.get("actor", "Unknown user"),
+        )
+
+        st.caption(f"Actor: {actor}")
+
+        created = event.get(
+            "created_at",
+            event.get("timestamp", ""),
+        )
+
+        if created:
+            st.caption(f"Time: {created}")
+
+        details = event.get("details")
+
+        if details:
+            st.write(details)
+
+        card_end()
+
+        st.markdown("")
+        
+# ============================================================
+# PART 18/20 — ADMINISTRATION
+# ============================================================
+
+def render_settings():
+
+    page_header(
+        "Workspace Settings",
+        "Organization identity and workspace configuration.",
+    )
+
+    user = current_user()
+
+    tab_general, tab_security, tab_admin = st.tabs([
+        "General",
+        "Security",
+        "Administration",
+    ])
+
+    with tab_general:
+
+        st.subheader("Workspace information")
+
+        st.text_input(
+            "Organization",
+            value=user.get("organization_name", ""),
+            disabled=True,
+        )
+
+        st.text_input(
+            "Organization ID",
+            value=organization_id(),
+            disabled=True,
+        )
+
+        st.text_input(
+            "Account name",
+            value=user.get("full_name", ""),
+            disabled=True,
+        )
+
+        st.text_input(
+            "Account email",
+            value=user.get("email", ""),
+            disabled=True,
+        )
+
+        st.info(
+            "Organization profile editing will require "
+            "a dedicated backend settings API."
+        )
+
+    with tab_security:
+
+        st.subheader("Security")
+
+        st.markdown("""
+        - Authentication is handled by the backend.
+        - Requests use the bearer access token.
+        - Organization-level access must be enforced server-side.
+        - Permission changes must be validated by the backend.
+        """)
+
+        st.warning(
+            "This frontend is not a replacement for server-side "
+            "authorization, access control or security validation."
+        )
+
+    with tab_admin:
+
+        st.subheader("Administration")
+
+        st.write(
+            "Administrative capabilities depend on the permissions "
+            "and APIs provided by the backend."
+        )
+
+        if st.button(
+            "Manage team",
+            type="primary",
+        ):
+            st.session_state.page = "Teams"
+            st.rerun()
+
+        if st.button("Review activity"):
+            st.session_state.page = "Activity"
+            st.rerun()
+
+        if st.button("Review knowledge sources"):
+            st.session_state.page = "Sources"
+            st.rerun()
+
+
+# ============================================================
+# PART 19/20 — SUBSCRIPTION & USAGE
+# ============================================================
+
+def render_billing():
+
+    page_header(
+        "Subscription & Usage",
+        "Review your organization's plan and subscription information.",
+    )
+
+    status, data = api_get(
+        "/api/v1/subscription"
+    )
+
+    if status != 200:
+
+        st.warning(
+            "Subscription information is not available "
+            "through this endpoint."
+        )
+
+        st.caption(
+            "Verify the subscription route in the running backend."
+        )
+
+        return
+
+    subscription = data.get(
+        "subscription",
+        data,
+    )
+
+    plan = subscription.get(
+        "plan",
+        "Unknown",
+    )
+
+    state = subscription.get(
+        "status",
+        "Unknown",
+    )
+
+    st.subheader("Current plan")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Plan", str(plan).title())
+
+    c2.metric("Status", str(state).title())
+
+    c3.metric(
+        "Organization",
+        organization_id() or "—",
+    )
+
+    st.divider()
+
+    st.subheader("Subscription details")
+
+    for key, value in subscription.items():
+
+        if isinstance(value, (str, int, float, bool)):
+
+            st.write(
+                f"**{key.replace('_', ' ').title()}**: {value}"
+            )
+
+    st.divider()
+
+    st.subheader("Billing capabilities")
+
+    st.info("""
+    Subscription records can be displayed by this application.
+
+    Real payment processing, provider verification, invoicing,
+    plan upgrades, usage metering and payment security require
+    correctly implemented and tested billing services.
+    """)
+
+
+# Billing will be added as a page in Part 20.
+
+# ============================================================
+# PART 20/20 — FINAL APPLICATION ASSEMBLY
+# ============================================================
+
+# Update navigation to include all frontend modules.
+
+PRODUCT_NAVIGATION = {
+    "KNOWLEDGE": [
+        ("Home", "⌂"),
+        ("Search", "⌕"),
+        ("Assistant", "✧"),
+        ("Discover", "◉"),
+    ],
+    "CONTENT": [
+        ("Documents", "▤"),
+        ("Document Viewer", "▣"),
+        ("Knowledge Graph", "◈"),
+        ("Graph Explorer", "⌘"),
+        ("Spaces", "▧"),
+    ],
+    "ORGANIZATION": [
+        ("People", "♙"),
+        ("Teams", "♧"),
+    ],
+    "SOURCES": [
+        ("Sources", "⇄"),
+        ("Ingestion", "↥"),
+    ],
+    "MANAGEMENT": [
+        ("Activity", "◷"),
+        ("Settings", "⚙"),
+        ("Billing", "$"),
+    ],
+}
+
+
+# ------------------------------------------------------------
+# FINAL APPLICATION ROUTER
+# ------------------------------------------------------------
+
+def run_application():
+
+    render_workspace_shell()
+
+    page = st.session_state.page
+
+    if page == "Home":
+
+        render_home()
+
+    elif page == "Search":
+
+        render_search()
+
+    elif page == "Assistant":
+
+        render_assistant()
+
+    elif page == "Discover":
+
+        render_discover()
+
+    elif page == "Documents":
+
+        render_documents()
+
+    elif page == "Document Viewer":
+
+        render_document_viewer()
+
+    elif page == "Knowledge Graph":
+
+        render_knowledge_graph()
+
+    elif page == "Graph Explorer":
+
+        render_graph_explorer()
+
+    elif page == "Spaces":
+
+        render_spaces()
+
+    elif page == "People":
+
+        render_people()
+
+    elif page == "Teams":
+
+        render_teams()
+
+    elif page == "Sources":
+
+        render_sources()
+
+    elif page == "Ingestion":
+
+        render_connector_ingestion()
+
+    elif page == "Activity":
+
+        render_activity()
+
+    elif page == "Settings":
+
+        render_settings()
+
+    elif page == "Billing":
+
+        render_billing()
+
+    else:
+
+        st.session_state.page = "Home"
+
+        st.rerun()
+
+
+# ------------------------------------------------------------
+# FINAL ENTRY POINT
+# THIS MUST BE THE LAST EXECUTABLE SECTION IN app.py
+# ------------------------------------------------------------
+
+if authentication_router():
+
+    run_application()
+        
+        
                     
 
 
