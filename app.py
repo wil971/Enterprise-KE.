@@ -3005,6 +3005,177 @@ def render_workflows():
         disabled=True,
         help="Workflow creation is not connected yet."
     )
+    # ============================================================
+# PART 28 — ENTERPRISE ANALYTICS
+# ============================================================
+
+def render_analytics():
+    page_header(
+        "Analytics",
+        "Understand knowledge usage and organizational discovery."
+    )
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Overview",
+        "Search analytics",
+        "Knowledge analytics",
+        "Engagement"
+    ])
+
+    with tab1:
+        st.subheader("Workspace overview")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric("Search volume", "—")
+        col2.metric("Knowledge coverage", "—")
+        col3.metric("Engagement", "—")
+        col4.metric("Content growth", "—")
+
+        st.caption(
+            "Metrics will populate only when supported "
+            "analytics data is available."
+        )
+
+    with tab2:
+        st.subheader("Search analytics")
+
+        st.info(
+            "Search frequency, unanswered queries, popular "
+            "queries, and search quality require analytics "
+            "events from the backend."
+        )
+
+    with tab3:
+        st.subheader("Knowledge analytics")
+
+        st.info(
+            "Knowledge coverage, source distribution, "
+            "document freshness, and graph connectivity "
+            "require additional aggregation APIs."
+        )
+
+    with tab4:
+        st.subheader("Engagement analytics")
+
+        st.info(
+            "Engagement analytics require reliable usage "
+            "events and organization-level aggregation."
+        )
+        # ============================================================
+# PART 29 — NOTIFICATIONS CENTER
+# ============================================================
+
+def render_notifications():
+    page_header(
+        "Notifications",
+        "Stay informed about important knowledge activity."
+    )
+
+    tab1, tab2 = st.tabs([
+        "All notifications",
+        "Preferences"
+    ])
+
+    with tab1:
+        st.subheader("Your notifications")
+
+        st.info(
+            "Notifications will appear here after the "
+            "notification backend is connected."
+        )
+
+        st.button(
+            "Mark all as read",
+            disabled=True,
+            help="Requires notification persistence."
+        )
+
+    with tab2:
+        st.subheader("Notification preferences")
+
+        st.checkbox(
+            "Knowledge updates",
+            disabled=True
+        )
+
+        st.checkbox(
+            "Shared documents",
+            disabled=True
+        )
+
+        st.checkbox(
+            "Team activity",
+            disabled=True
+        )
+
+        st.checkbox(
+            "Workflow updates",
+            disabled=True
+        )
+
+        st.checkbox(
+            "System announcements",
+            disabled=True
+        )
+
+        st.button(
+            "Save preferences",
+            disabled=True,
+            help="Notification preferences API is not connected."
+        )
+        # ============================================================
+# PART 30 — ENTERPRISE COMMAND CENTER
+# ============================================================
+
+def render_command_center():
+    page_header(
+        "Command Center",
+        "Navigate and manage your enterprise knowledge workspace."
+    )
+
+    st.subheader("Workspace navigation")
+
+    shortcuts = [
+        ("Search", "Search"),
+        ("Assistant", "Assistant"),
+        ("Documents", "Documents"),
+        ("Knowledge Graph", "Knowledge Graph"),
+        ("Discover", "Discover"),
+        ("Sources", "Sources"),
+        ("Spaces", "Spaces"),
+        ("People", "People"),
+        ("Teams", "Teams"),
+        ("Activity", "Activity"),
+        ("Analytics", "Analytics"),
+        ("Workflows", "Workflows"),
+        ("Notifications", "Notifications"),
+        ("Permissions", "Permissions"),
+        ("Collaboration", "Collaboration"),
+    ]
+
+    cols = st.columns(3)
+
+    for index, (label, destination) in enumerate(shortcuts):
+        with cols[index % 3]:
+            if st.button(
+                label,
+                key=f"command_{index}",
+                use_container_width=True
+            ):
+                st.session_state["page"] = destination
+                st.rerun()
+
+    st.divider()
+
+    st.subheader("Enterprise workspace status")
+
+    st.info(
+        "This command center provides navigation into the "
+        "product. Actual workspace health, connector status, "
+        "analytics, and workflow execution will be populated "
+        "through verified backend integrations."
+    )
         
         
                     
