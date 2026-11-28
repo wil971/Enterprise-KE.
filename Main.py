@@ -416,7 +416,7 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
-        salt_hex, expected_hash = stored_hash.split(":", 1)
+        salt_hex, expected_hash = stored_hash.split("$", 1)
 
         actual_hash = hashlib.scrypt(
             password.encode(),
