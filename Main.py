@@ -624,8 +624,27 @@ async def current_user_profile(
 # GOOGLE OAUTH — STATE SECURITY
 # ============================================================
 
+
+GOOGLE_STATE_COOKIE = "google_oauth_state"
+
+
 def generate_oauth_state() -> str:
     return secrets.token_urlsafe(32)
+
+
+def set_oauth_state_cookie(
+    response: RedirectResponse,
+    state: str,
+) -> None:
+    response.set_cookie(
+        key=GOOGLE_STATE_COOKIE,
+        value=state,
+        max_age=600,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/api/v1/auth/google",
+    )
 
 
 async def write_audit(
