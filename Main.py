@@ -646,7 +646,45 @@ def set_oauth_state_cookie(
         path="/api/v1/auth/google",
     )
 
+# ============================================================
+# GOOGLE OAUTH — SIGN-IN START
+# ============================================================
 
+@app.get("/api/v1/auth/google/start")
+async def google_login_start():
+
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in is not configured.",
+        )
+
+    state = generate_oauth_state()
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_CALLBACK_URL,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+
+    google_url = (
+        GOOGLE_AUTHORIZATION_URL
+        + "?"
+        + urlencode(params)
+    )
+
+    response = RedirectResponse(
+        url=google_url,
+        status_code=302,
+    )
+
+    set_oauth_state_cookie(response, state)
+
+    return response
 async def write_audit(
     db: AsyncSession,
     tenant_id: str,
