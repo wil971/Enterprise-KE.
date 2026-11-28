@@ -683,6 +683,111 @@ async def google_login_start():
     )
 
     set_oauth_state_cookie(response, state)
+    # ============================================================
+# GOOGLE OAUTH — CALLBACK
+# ============================================================
+
+@app.get("/api/v1/auth/google/callback")
+async def google_login_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+):
+
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail="Google sign-in was cancelled or denied.",
+        )
+
+    if not code or not state:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing authorization code or state.",
+        )
+
+    cookie_state = request.cookies.get(GOOGLE_STATE_COOKIE)
+
+    if not cookie_state or not secrets.compare_digest(
+        state, cookie_state
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid OAuth state.",
+        )
+
+    # EXCHANGE AUTHORIZATION CODE
+    async with httpx.AsyncClient(timeout=30.0) as client:
+
+        token_response = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_CALLBACK_URL,
+                "grant_type": "authorization_code",
+            },
+        )
+
+        if token_response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail="Google token exchange failed.",
+            )
+
+        token_data = token_response.json()
+        access_token = token_data.get("access_token")
+
+        if not access_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Google access token missing.",
+            )
+
+        # GET VERIFIED GOOGLE PROFILE
+        profile_response = await client.get(
+            GOOGLE_USERINFO_URL,
+            headers={
+                "Authorization": f"Bearer {access_token}"
+            },
+        )
+
+        if profile_response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail="Google profile retrieval failed.",
+            )
+
+        google_profile = profile_response.json()
+
+    google_id = google_profile.get("sub")
+    email = google_profile.get("email", "").strip().lower()
+    email_verified = google_profile.get("email_verified", False)
+    full_name = google_profile.get("name", "")
+
+    if not google_id or not email or not email_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="Google identity verification failed.",
+        )
+
+    # Profile verified successfully.
+    # Next step: existing-user lookup, workspace handling,
+    # and JWT/session creation using your actual backend models.
+
+    response = RedirectResponse(
+        url=FRONTEND_URL,
+        status_code=302,
+    )
+
+    response.delete_cookie(
+        key=GOOGLE_STATE_COOKIE,
+        path="/api/v1/auth/google",
+    )
+
+    return response
 
     return response
 async def write_audit(
